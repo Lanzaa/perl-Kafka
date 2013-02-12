@@ -1,0 +1,54 @@
+Revision history for Kafka package
+
+0.10  Thu Feb  07 2013
+    CHANGES:
+    - 03_kafka_bench.t does not depend on previous tests
+
+0.09  Mon Jan  14 2013
+    CHANGES:
+    - benchmark_consumer.pl and benchmark_producer.pl are moved
+      to directory tools
+    - Makefile.PL by default does not ask questions interactively
+
+0.08  Fri Dec  21 2012
+    CHANGES:
+    - Tests reorganized
+
+0.07  Thu Dec  18 2012
+    FIXES:
+    - Checking OS and Perl version in Makefile.PL
+      CPAN RT #82018: Tests hang on Windows. (reported by Alexandr Ciornii)
+
+0.06  Wed Sep  26 2012
+    CHANGES:
+    - Refinement of calculation operation time in benchmarks
+    - Some improvements in tests
+
+0.05  Thu Sep  13 2012
+    CHANGES:
+    - Mock server tests moved to 'xt' directory
+
+0.04  Mon Sep  10 2012
+    CHANGES:
+    - Author and release tests moved to 'xt' directory
+
+0.03  Thu Aug  30 2012
+    CHANGES:
+    - Makefile.PL modified for the use of command line
+    - Added control code coverage 'coverage.sh'
+    - Added test 't/94_fixme.t'
+    - Added test 't/95_critic.t'
+
+    BUGFIXES:
+    - Fixed version number to 'use 5.010'
+
+0.02  Wed Jun  13 2012
+    CHANGES:
+    - Minor changes in documentation
+
+    BUGFIXES:
+    - Fixed Kafka::Int64 to make it working on Perl 5.12
+    - Disallow using 0 timeouts in Kafka::IO and Kafka::Mock
+
+0.01  Tue Jun  12 2012
+    - Original version
