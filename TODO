@@ -1,0 +1,28 @@
+
+Trying to bring everything up to 0.8 protocol
+
+TODO: (Unimplemented)
+    Metadata API
+        Metadata Request
+        Metadata Response
+    Produce API
+        Produce Request
+        Produce Response
+    Offset Commit/Fetch API
+        Offset Commit Request
+        Offset Commit Response
+        Offset Fetch Request
+        Offset Fetch Response
+
+TODO: (Reimagine)
+    Redo Perl api for new batching operations
+    Have perl and the Offset Commit/Fetch API handle offsets of topics
+
+DONE: (Basic Implementation)
+    Fetch API
+        Fetch Request
+        Fetch Response
+    Offset API
+        Offset Request
+        Offset Response
+
