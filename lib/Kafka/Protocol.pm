@@ -114,13 +114,11 @@ sub _request_header_encode {
         s>      # ApiKey
         s>      # ApiVersion
         l>      # Correlation id
-        s>      # length of client_id string
-        a*
+        s>/a   # length of client_id string
         ",
         $request_type,
         $api,
         $correlation_id,
-        bytes::length($client_id),
         $client_id,
     );
 
@@ -373,8 +371,8 @@ sub fetch_request {
     # Encode the array of topics
     $encoded .= pack("
         l>      # Number of array elements
-        s> a*   # Topic Name size and string
-        ", 1, bytes::length($topic), $topic);
+        s>/a   # Topic Name size and string
+        ", 1, $topic);
 
     # Encode the array of partition requests for this topic
     $encoded .= pack("
@@ -418,7 +416,7 @@ sub offsets_request {
 
     # TODO Allow multiple partition requests?
     my $encoded = pack("l>l>", -1, 1); # Replica id and topic count
-    $encoded .= pack("s>a*", bytes::length($topic), $topic);
+    $encoded .= pack("s>/a", $topic);
     $encoded .= pack("l>l>", 1, $partition); 
     $encoded .= ( BITS64 ? pack( "q>", $time + 0 ) : Kafka::Int64::packq( $time + 0 ) );   # TIME
     $encoded .= pack( "
