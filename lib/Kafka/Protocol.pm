@@ -51,10 +51,14 @@ use constant {
     COMPRESSION_GZIP                    => 1,   # Not used now
     COMPRESSION_SNAPPY                  => 2,   # Not used now
 
-    REQUESTTYPE_PRODUCE_08              => 0,
-    REQUESTTYPE_FETCH_08                => 1,
-    REQUESTTYPE_OFFSETS_08              => 2,
-    REQUESTTYPE_METADATA_08             => 3,
+    APIKEY_PRODUCE                      => 0,
+    APIKEY_FETCH                        => 1,
+    APIKEY_OFFSETS                      => 2,
+    APIKEY_METADATA                     => 3,
+    APIKEY_LEADERANDIDR                 => 4,
+    APIKEY_STOPREPLICA                  => 5,
+    APIKEY_OFFSETCOMMIT                 => 6,
+    APIKEY_OFFSETFETCH                  => 7,
 };
 
 our $_last_error;
@@ -365,7 +369,7 @@ sub offsets_request {
 
     $encoded = _request_header_encode(
             bytes::length( $encoded ),
-            REQUESTTYPE_OFFSETS_08,
+            APIKEY_OFFSETS,
             "0123456789", # ClientID
             ).$encoded;
 
