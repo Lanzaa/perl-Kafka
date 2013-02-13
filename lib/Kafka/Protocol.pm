@@ -50,6 +50,11 @@ use constant {
     COMPRESSION_NO_COMPRESSION          => 0,
     COMPRESSION_GZIP                    => 1,   # Not used now
     COMPRESSION_SNAPPY                  => 2,   # Not used now
+
+    REQUESTTYPE_PRODUCE_08              => 0,
+    REQUESTTYPE_FETCH_08                => 1,
+    REQUESTTYPE_OFFSETS_08              => 2,
+    REQUESTTYPE_METADATA_08             => 3,
 };
 
 our $_last_error;
@@ -82,37 +87,38 @@ sub _error {
 sub _request_header_encode {
     my $request_length  = shift;
     my $request_type    = shift;
-    my $topic           = shift;
-    my $partition       = shift;
+    my $client_id       = shift;
+    my $correlation_id  = shift || -1; #XXX TODO
+    my $api = 0;
 
-    my$ encoded =
-        pack( "
-            N                                   # REQUEST_LENGTH
-            n                                   # REQUEST_TYPE
-            n                                   # TOPIC_LENGTH
-            ",
-            $request_length + 2+ 2 + bytes::length( $topic ) + 4,
-            $request_type,
-            bytes::length( $topic ),
-            )
-        .$topic
-        .pack( "
-            N                                   # PARTITION
-            ",
-            $partition,
-            );
+    my $encoded = pack("
+        s>      # ApiKey
+        s>      # ApiVersion
+        l>      # Correlation id
+        s>      # length of client_id string
+        a*
+        ",
+        $request_type,
+        $api,
+        $correlation_id,
+        bytes::length($client_id),
+        $client_id,
+    );
+
+    my $len = $request_length + bytes::length($encoded);
 
     if ( DEBUG )
     {
-        print STDERR "Request header:\n"
-            ."REQUEST_LENGTH    = ".($request_length + 2+ 2 + bytes::length( $topic ) + 4)."\n"
+        print STDERR "Request header 08:\n"
+            ."REQUEST_LENGTH    = ".($len)."\n"
             ."REQUEST_TYPE      = $request_type\n"
-            ."TOPIC_LENGTH      = ".bytes::length( $topic )."\n"
-            ."TOPIC             = $topic\n"
-            ."PARTITION         = $partition\n";
+            ."CLIENT_ID         = $client_id\n"
+            ."CORR_ID           = $correlation_id\n"
+            ."API Version       = $api\n"
+        ;
     }
 
-    return $encoded;
+    return pack("l>", $len).$encoded;
 }
 
 # PRODUCE Request --------------------------------------------------------------
@@ -337,25 +343,30 @@ sub offsets_request {
     $time = int( $time );
     return _error( ERROR_MISMATCH_ARGUMENT ) if $time < -2;
 
-    my $encoded = ( BITS64 ? pack( "q>", $time + 0 ) : Kafka::Int64::packq( $time + 0 ) )   # TIME
-        .pack( "
-            N                                   # MAX_NUMBER
-            ",
-            $max_number,
+    # TODO Allow multiple partition requests?
+    my $encoded = pack("l>l>", -1, 1); # Replica id and topic count
+    $encoded .= pack("s>a*", bytes::length($topic), $topic);
+    $encoded .= pack("l>l>", 1, $partition); 
+    $encoded .= ( BITS64 ? pack( "q>", $time + 0 ) : Kafka::Int64::packq( $time + 0 ) );   # TIME
+    $encoded .= pack( "
+                      N                                   # MAX_NUMBER
+                      ",
+                      $max_number,
             );
 
     if ( DEBUG )
     {
         print STDERR "Offsets request:\n"
             ."TIME               = $time\n"
-            ."MAX_NUMBER         = $max_number\n";
+            ."MAX_NUMBER         = $max_number\n"
+            ."ENCODED_LEN        = ".bytes::length( $encoded )."\n"
+        ;
     }
 
     $encoded = _request_header_encode(
             bytes::length( $encoded ),
-            REQUESTTYPE_OFFSETS,
-            $topic,
-            $partition
+            REQUESTTYPE_OFFSETS_08,
+            "0123456789", # ClientID
             ).$encoded;
 
     return $encoded;
@@ -378,18 +389,18 @@ sub _response_header_decode {
         $position = 0;
         (
             $header->{response_length},
-            $header->{error_code},
+            $header->{correlation_id},
         ) = unpack( "
-            N                                       # RESPONSE_LENGTH
-            n                                       # ERROR_CODE
+            l>                                       # RESPONSE_LENGTH
+            l>                                       # CorrelationID
             ", $$response );
-        $position += 6;
+        $position += 8;
 
         if ( DEBUG )
         {
             print STDERR "Response Header:\n"
                 ."RESPONSE_LENGTH    = $header->{response_length}\n"
-                ."ERROR_CODE         = $header->{error_code}\n";
+                ."CORRELATION_ID     = $header->{correlation_id}\n";
         }
     }
 
@@ -440,27 +451,45 @@ sub offsets_response {
 
     unless ( $decoded->{header}->{error_code} )
     {
-        (
-            $decoded->{number_offsets},
-        ) = unpack( "
-            x".$position
-            ."N                                   # NUMBER_OFFSETS
-            ", $$response );
+        $decoded->{number_topics} = unpack("x$position l>", $$response);
         $position += 4;
 
-        $decoded->{offsets} = [];
-        while ( $position < $len )
-        {
-            my $offset;
-
-            $offset = BITS64 ?                  # OFFSET
-                unpack( "x${position}q>", $$response )
-                : Kafka::Int64::unpackq( unpack( "x${position}a8", $$response ) );
-            $position += 8;
-
-            push @{$decoded->{offsets}}, $offset;
+        if ($decoded->{number_topics} > 1) {
+            die("[BUG] More than one topic offset response received (Not implemented).");
         }
 
+        $decoded->{topics} = ();
+        my $i = 0;
+        for ($i = 0; $i < $decoded->{number_topics}; $i++) {
+            my ($strlen, $topic, $partition_count) 
+                = unpack("x$position s>X2 s>/a l>", $$response);
+            $position += 6 + $strlen;
+
+            if ($partition_count > 1) {
+                die("[BUG] Not implemented.");
+            }
+
+            my $j = 0;
+            for ($j = 0; $j < $partition_count; $j++) {
+                my ($partition, $error_code, $offset_count)
+                    = unpack("x".$position."l> s> l>", $$response);
+                $position += 10;
+
+                $decoded->{error} = $error_code;
+                $decoded->{number_offsets} = $offset_count;
+
+                my $offsets = [];
+                my $o = 0;
+                for ($o = 0; $o < $offset_count; $o++) {
+                    my $offset = BITS64     # OFFSET
+                      ? unpack("x$position q>", $$response )
+                      : Kafka::Int64::unpackq( unpack( "x$position a8", $$response ) );
+                    $position += 8;
+                    push @{$offsets}, $offset;
+                }
+                $decoded->{offsets} = $offsets;
+            }
+        }
         $decoded->{error} = ( $decoded->{number_offsets} == scalar( @{$decoded->{offsets}} ) ) ? "" : $Kafka::ERROR[ERROR_NUMBER_OF_OFFSETS];
 
         if ( DEBUG )
