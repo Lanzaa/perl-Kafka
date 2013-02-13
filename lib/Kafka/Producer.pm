@@ -15,7 +15,7 @@ use Kafka qw(
     ERROR_MISMATCH_ARGUMENT
     ERROR_CANNOT_SEND
     );
-use Kafka::Protocol qw( produce_request );
+use Kafka::Protocol qw( produce_request produce_response );
 
 our $_last_error;
 our $_last_errorcode;
@@ -92,6 +92,7 @@ sub send {
     $_last_error        = $_last_errorcode          = undef;
     $self->{last_error} = $self->{last_errorcode}   = undef;
     my $sent;
+    # TODO XXX We must start to send the messages to the proper broker soon.
     eval { $sent = $self->{IO}->send( produce_request( $topic, $partition, $messages ) ) };
     unless ( defined( $sent ) )
     {
@@ -111,7 +112,40 @@ sub send {
         return;
     }
 
+    my $decoded = {};
+    eval { $decoded = $self->_receive( ) };
+    return $self->_error( $self->{last_errorcode}, $self->{last_error} )
+        if ($self->{last_error});
+
+    # TODO Handle error codes from partitions
+    # An error code will tell us to send to a different broker
+
     return 1;
+}
+
+sub _receive {
+    my $self            = shift;
+    my $request_type    = shift;
+
+    die("[BUG] Not implemented silly.");
+
+    my $response = {};
+    my $message = $self->{IO}->receive( 4 );
+    return $self->_error( $self->{IO}->last_errorcode, $self->{IO}->last_error )
+        unless ( $message and defined $$message );
+    my $tail = $self->{IO}->receive( unpack( "N", $$message ) );
+    return $self->_error( $self->{IO}->last_errorcode, $self->{IO}->last_error )
+        unless ( $tail and defined $$tail );
+    $$message .= $$tail;
+
+    my $decoded = produce_response( $message );
+# WARNING: remember the error code of the last received packet
+    unless ( $response->{error_code} = $decoded->{header}->{error_code} )
+    {
+        $response->{messages} = [] unless defined $response->{messages};
+        push @{$response->{messages}}, @{$decoded->{messages}};
+    }
+    return $response;
 }
 
 sub close {

@@ -5,14 +5,16 @@ TODO: (Unimplemented)
     Metadata API
         Metadata Request
         Metadata Response
-    Produce API
-        Produce Request
-        Produce Response
     Offset Commit/Fetch API
         Offset Commit Request
         Offset Commit Response
         Offset Fetch Request
         Offset Fetch Response
+
+TODO: (Very basic implementation so far)
+    Produce API
+        Produce Request
+        Produce Response
 
 TODO: (Reimagine)
     Redo Perl api for new batching operations
@@ -26,3 +28,8 @@ DONE: (Basic Implementation)
         Offset Request
         Offset Response
 
+
+
+OTHER:
+* Allow selection of partition to send message to
+* Allow sending of partition key

@@ -14,6 +14,7 @@ our @EXPORT_OK  = qw(
     produce_request
     fetch_request
     offsets_request
+    produce_response
     fetch_response
     offsets_response
     );
@@ -31,6 +32,7 @@ use Kafka qw(
     ERROR_CHECKSUM_ERROR
     ERROR_COMPRESSED_PAYLOAD
     ERROR_NUMBER_OF_OFFSETS
+    DEFAULT_TIMEOUT
     BITS64
     );
 
@@ -60,7 +62,12 @@ use constant {
     APIKEY_OFFSETCOMMIT                 => 6,
     APIKEY_OFFSETFETCH                  => 7,
 
+    ACK_NONE                            => 0,
+    ACK_LOCAL                           => 1,
+    ACK_ALLREPLICAS                     => -1,
+
     REPLICAID                           => -1,
+    SENTINEL_OFFSET                     => -1, # Can be anything
 
     # XXX These probably should not be constant
     CLIENT_ID                           => "perl-kafka",
@@ -121,7 +128,7 @@ sub _request_header_encode {
 
     if ( DEBUG )
     {
-        print STDERR "Request header 08:\n"
+        print STDERR "Request header:\n"
             ."REQUEST_LENGTH    = ".($len)."\n"
             ."REQUEST_TYPE      = $request_type\n"
             ."CLIENT_ID         = $client_id\n"
@@ -156,13 +163,35 @@ sub produce_request {
 
     $messages = [ $messages ] if ( !ref( $messages ) );
 
-    my $encoded = _messages_encode( $messages );
+    # TODO Allow ack level to be set
+    # TODO Allow timeout to be set
+    my $encoded = pack("
+            s>          # Required Acks
+            l>          # Timeout
+            ", ACK_ALLREPLICAS, DEFAULT_TIMEOUT,
+        );
 
-    $encoded = pack( "
-        N                                       # MESSAGES_LENGTH
+    # TODO Allow multiple topics and partitions
+    my $messageset = _messageset_encode( $messages );
+    $encoded .= pack("
+        l>          # Number of topics
+        s>/a        # Topic
+        l>          # Number of partitions
+        l>          # Partition
+        l>/a        # Message Set len and data
         ",
-        bytes::length( $encoded ),
-        ).$encoded;
+        1,
+        $topic,
+        1,
+        $partition,
+        $messageset,
+    );
+
+    $encoded = _request_header_encode(
+            bytes::length( $encoded ),
+            APIKEY_PRODUCE,
+            CLIENT_ID,
+            ).$encoded;
 
     if ( DEBUG )
     {
@@ -170,19 +199,16 @@ sub produce_request {
             ."MESSAGES_LENGTH    = ".bytes::length( $encoded )."\n";
     }
 
-    $encoded = _request_header_encode(
-            bytes::length( $encoded ),
-            REQUESTTYPE_PRODUCE,
-            $topic,
-            $partition
-            ).$encoded;
-
     return $encoded;
 }
 
 # MESSAGE ----------------------------------------------------------------------
 
-sub _messages_encode {
+##
+# Expects an array of messages and returns a wire encoded messageset
+# Assumes all messages are for the same topic-partition
+##
+sub _messageset_encode {
     my $messages    = shift;
 # for future versions
     my $magic       = shift || MAGICVALUE_NOCOMPRESSION;
@@ -193,33 +219,31 @@ sub _messages_encode {
     {
         return _error( ERROR_INVALID_MESSAGE_CODE ) if ref( $message );
 
-        $encoded .=
-            pack( "
-                N                               # LENGTH
-                C                               # MAGIC
-                ",
-                bytes::length( $message ) + 5 + ( $magic ? 1 : 0 ),
-                $magic,
-                )
-            .( $magic ?
-                pack( "
-                    C                           # COMPRESSION
-                    ",
-                    $compression,
-                    )
-                : "" )
-            .pack( "
-                N                               # CHECKSUM
-                ",
-                crc32( $message ),
-                )
-            .$message;
-    }
+        my $attributes = $compression;
+        my $key; # The key used to decide which partition the message is sent to
 
-    if ( DEBUG )
-    {
-        my $tmp = $encoded;
-        _messages_decode( \$tmp );
+        if ($key)  {
+            print STDERR "Key is alive\n";
+        }
+
+        my $encoded_message = pack( "
+                c       # Magic
+                c       # Attributes
+                ",
+                $magic,
+                $attributes,
+            )
+            .( $key ? pack("l>/a", $key) : pack("l>", -1) )
+            .( $message ? pack("l>/a", $message) : pack("l>", -1) )
+            ;
+        $encoded .= ( BITS64 
+                    ? pack( "q>", SENTINEL_OFFSET ) 
+                    : Kafka::Int64::packq( SENTINEL_OFFSET ) )   # OFFSET
+            .pack("l> L> a* ", 
+                4+bytes::length($encoded_message), 
+                crc32($encoded_message), 
+                $encoded_message
+            );
     }
 
     return $encoded;
@@ -457,6 +481,51 @@ sub _response_header_decode {
 }
 
 # PRODUCE Response
+
+sub produce_response {
+    die("[BUG] Not implemented silly one.");
+    my $response = _SCALAR( shift ) or return _error( ERROR_MISMATCH_ARGUMENT );
+
+    _STRING( $$response ) or return _error( ERROR_MISMATCH_ARGUMENT );
+    # 6 = length( RESPONSE_LENGTH + ERROR_CODE )
+    return _error( ERROR_MISMATCH_ARGUMENT ) if bytes::length( $$response ) < 6;
+
+    my $decoded = {};
+    if ( scalar keys %{ $decoded->{header} = _response_header_decode( $response ) } )
+    {
+        my $topic_count = unpack("x$position l>", $$response);
+        $position += 4;
+        for my $i (1 .. $topic_count) {
+            my ($strlen, $topic, $partition_count) = 
+                unpack("x$position s>X2 s>/a l>", $$response);
+            $position += 6 + $strlen;
+
+            for my $j (1 .. $partition_count) {
+                my ($partition, $error_code, $highwaterp, $messageset_size) =
+                    unpack("x$position l> s> a8 l>", $$response);
+                $position += 18;
+                my $highwater = BITS64     # OFFSET
+                  ? unpack("q>", $highwaterp )
+                  : Kafka::Int64::unpackq($highwaterp);
+
+                if (DEBUG) {
+                    print STDERR ""
+                        ."partition         = $partition\n"
+                        ."error code        = $error_code\n"
+                        ."message set size  = $messageset_size\n"
+                        ;
+                }
+                $decoded->{header}->{error_code} = $error_code;
+                $decoded->{messages} = _messageset_decode( $position+$messageset_size, $response ) unless $error_code;
+            }
+        }
+
+        #$decoded->{messages}    = _messages_decode( $response ) unless $decoded->{header}->{error_code};
+    }
+
+    return $decoded;
+
+}
 
 #   None
 
