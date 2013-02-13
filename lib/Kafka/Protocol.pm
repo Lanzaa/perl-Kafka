@@ -59,6 +59,14 @@ use constant {
     APIKEY_STOPREPLICA                  => 5,
     APIKEY_OFFSETCOMMIT                 => 6,
     APIKEY_OFFSETFETCH                  => 7,
+
+    REPLICAID                           => -1,
+
+    # XXX These probably should not be constant
+    CLIENT_ID                           => "perl-kafka",
+    MAX_WAIT_TIME                       => 2,
+    MIN_BYTES                           => 1,
+    CORRELATIONID                       => -1,
 };
 
 our $_last_error;
@@ -217,63 +225,28 @@ sub _messages_encode {
     return $encoded;
 }
 
-sub _messages_decode {
-    my $encoded_messages = shift;               # requires a reference
+sub _messageset_decode {
+    my $end         = shift;
+    my $response    = shift;               # requires a reference
 
     my $decoded_messages = [];
-    my $len = bytes::length( $$encoded_messages );
 
-    # 10 = lenfth( LENGTH + MAGIC + CHECKSUM + ( COMPRESSION or 1 byte of PAYLOAD ) )
-    while ( $len - $position >= 10 )
-    {
-# will unpack exception if the message structure disrupted
+    # 12 = length( OFFSET + LENGTH )
+    while ( $end - $position > 12 ) {
         my $message = {};
 
-        (
-            $message->{length},
-        ) = unpack( "x${position}
-            N                                    # LENGTH
-            ", $$encoded_messages );
+        my $offset = BITS64     # OFFSET
+          ? unpack("x$position q>", $$response )
+          : Kafka::Int64::unpackq( unpack( "x$position a8", $$response ) );
+        $position += 8;
+        my $length = unpack("x$position l>", $$response);
         $position += 4;
 
-        last if ( ( $len - $position ) < $message->{length} );
+        last if ( ( $end - $position ) < $length ); # Incomplete message
 
-        (
-            $message->{magic},
-        ) = unpack( "x${position}
-            C                                   # MAGIC
-            ", $$encoded_messages );
-        $position += 1;
-
-        if ( $message->{magic} )
-        {
-            (
-                $message->{compression},
-            ) = unpack( "x${position}
-                C                               # COMPRESSION
-                ", $$encoded_messages );
-            $position += 1;
-        }
-        else
-        {
-            $message->{compression} = 0;
-        }
-
-        my $p_len = $message->{length} - 5 - ( $message->{magic} ? 1 : 0 );
-        (
-            $message->{checksum},
-            $message->{payload},
-        ) = unpack( "x${position}
-            N                                   # CHECKSUM
-            a${p_len}                           # PAYLOAD
-            ", $$encoded_messages );
-        $position += 4 + $p_len;
-
-        $message->{error} = "";
-        $message->{error} = $Kafka::ERROR[ERROR_CHECKSUM_ERROR] if $message->{checksum} != crc32( $message->{payload} );
-# compression in the current version is a bug
-        $message->{error} .= ( $message->{error} ? "\n" : "" ).$Kafka::ERROR[ERROR_COMPRESSED_PAYLOAD] if $message->{magic};
-        $message->{valid} = !$message->{error};
+        $message = _decode_message($length, $response);
+        $message->{valid} = ! $message->{error};
+        $message->{offset} = $offset;
 
         push @$decoded_messages, $message;
     }
@@ -299,6 +272,62 @@ sub _messages_decode {
     return $decoded_messages;
 }
 
+sub _decode_message {
+    my $length = shift; # The length of the message
+    my $response = shift; # The full response 
+    my $message = {};
+    $message->{error} = "";
+    $message->{length} = $length;
+
+    my ($key_size, $payload_size);
+
+    (
+        $message->{checksum},
+        $message->{magic},
+        $message->{attributes},
+        $key_size,
+    ) = unpack("x$position
+        L>          # Checksum
+        c           # MagicByte
+        c           # Attributes
+        l>          # Key size
+        ", $$response);
+    $position += 4; # Just the checksum
+    $message->{error} = $Kafka::ERROR[ERROR_CHECKSUM_ERROR] if $message->{checksum} != crc32( unpack("x$position a".($length-4), $$response ));
+    $position += 1 + 1 + 4; # Consume the bytes and key size
+
+    if ($key_size >= 0) {
+        $message->{key} = unpack("x$position a$key_size", $$response);
+        $position += $key_size;
+    }
+
+    $payload_size = unpack("x$position l>", $$response);
+    $position += 4;
+    if ($payload_size >= 0) {
+        $message->{payload} = unpack("x$position a$payload_size", $$response);
+        $position += $payload_size;
+    }
+
+    if ($message->{magic}) {
+        print STDERR "Magic is set: $message->{magic}\n"; # TODO fix
+        die("[BUG] Handling more magic is not implemented.");
+    }
+
+    # Parse the attributes. This should be based on the magic version
+    $message->{compression} = ($message->{attributes} & 0x3);
+    if ($message->{compression} == COMPRESSION_NO_COMPRESSION) {
+        # Good
+    } elsif ($message->{compression} == COMPRESSION_GZIP) {
+        die("[BUG] GZIP compressed messages has not been implemented.");
+    } elsif ($message->{compression} == COMPRESSION_SNAPPY) {
+        die("[BUG] SNAPPY compressed messaged has not been implemented.");
+    } else {
+        die("[ERROR] Unknown compression type found.");
+    }
+
+    return $message;
+}
+
 # FETCH Request ----------------------------------------------------------------
 
 sub fetch_request {
@@ -310,25 +339,41 @@ sub fetch_request {
     return _error( ERROR_MISMATCH_ARGUMENT ) unless defined( _NONNEGINT( $partition ) );
     ( ref( $offset ) eq "Math::BigInt" and $offset >= 0 ) or defined( _NONNEGINT( $offset ) ) or return _error( ERROR_MISMATCH_ARGUMENT );
 
-    my $encoded = ( BITS64 ? pack( "q>", $offset + 0 ) : Kafka::Int64::packq( $offset + 0 ) )   # OFFSET
-        .pack( "
-            N                                   # MAX_SIZE
-            ",
-            $max_size,
-            );
+    # Encode the header for fetch request
+    my $encoded = pack("
+        l>      # ReplicaId
+        l>      # Max Wait time
+        l>      # Min Bytes
+        ", REPLICAID, MAX_WAIT_TIME, MIN_BYTES);
+
+    # Encode the array of topics
+    $encoded .= pack("
+        l>      # Number of array elements
+        s> a*   # Topic Name size and string
+        ", 1, bytes::length($topic), $topic);
+
+    # Encode the array of partition requests for this topic
+    $encoded .= pack("
+            l>      # Number of array elements
+            l>      # Partition
+            ", 1, $partition)
+        .( BITS64 ? pack( "q>", $offset + 0 ) : Kafka::Int64::packq( $offset + 0 ) )   # OFFSET
+        .pack("l>   # Max bytes
+            ", $max_size);
+
 
     if ( DEBUG )
     {
         print STDERR "Fetch request:\n"
+            ."PARTITION          = $partition\n"
             ."OFFSET             = $offset\n"
             ."MAX_SIZE           = $max_size\n";
     }
 
     $encoded = _request_header_encode(
             bytes::length( $encoded ),
-            REQUESTTYPE_FETCH,
-            $topic,
-            $partition
+            APIKEY_FETCH,
+            CLIENT_ID,
             ).$encoded;
 
     return $encoded;
@@ -370,7 +415,7 @@ sub offsets_request {
     $encoded = _request_header_encode(
             bytes::length( $encoded ),
             APIKEY_OFFSETS,
-            "0123456789", # ClientID
+            CLIENT_ID, # ClientID
             ).$encoded;
 
     return $encoded;
@@ -425,15 +470,36 @@ sub fetch_response {
     return _error( ERROR_MISMATCH_ARGUMENT ) if bytes::length( $$response ) < 6;
 
     my $decoded = {};
-
-    if ( DEBUG )
+    if ( scalar keys %{ $decoded->{header} = _response_header_decode( $response ) } )
     {
-        print STDERR "Fetch response:\n";
-    }
+        my $topic_count = unpack("x$position l>", $$response);
+        $position += 4;
+        for my $i (1 .. $topic_count) {
+            my ($strlen, $topic, $partition_count) = 
+                unpack("x$position s>X2 s>/a l>", $$response);
+            $position += 6 + $strlen;
 
-    if ( scalar keys %{$decoded->{header}      = _response_header_decode( $response )} )
-    {
-        $decoded->{messages}    = _messages_decode( $response ) unless $decoded->{header}->{error_code};
+            for my $j (1 .. $partition_count) {
+                my ($partition, $error_code, $highwaterp, $messageset_size) =
+                    unpack("x$position l> s> a8 l>", $$response);
+                $position += 18;
+                my $highwater = BITS64     # OFFSET
+                  ? unpack("q>", $highwaterp )
+                  : Kafka::Int64::unpackq($highwaterp);
+
+                if (DEBUG) {
+                    print STDERR ""
+                        ."partition         = $partition\n"
+                        ."error code        = $error_code\n"
+                        ."message set size  = $messageset_size\n"
+                        ;
+                }
+                $decoded->{header}->{error_code} = $error_code;
+                $decoded->{messages} = _messageset_decode( $position+$messageset_size, $response ) unless $error_code;
+            }
+        }
+
+        #$decoded->{messages}    = _messages_decode( $response ) unless $decoded->{header}->{error_code};
     }
 
     return $decoded;
