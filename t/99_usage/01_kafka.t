@@ -83,7 +83,7 @@ if ( !$producer->send(
     "Single message"                            # message
     ) )
 {
-    fail "(".$producer->last_errorcode.") ".$producer->last_error;
+    fail "unable to send message (".$producer->last_errorcode.") ".$producer->last_error;
 }
 else
 {
@@ -101,7 +101,7 @@ if ( !$producer->send(
     ]
     ) )
 {
-    fail "(".$producer->last_errorcode.") ".$producer->last_error;
+    fail "unable to send messages (".$producer->last_errorcode.") ".$producer->last_error;
 }
 else
 {
@@ -165,7 +165,7 @@ if( $offsets )
 # may be both physical and logical errors ("Response contains an error in 'ERROR_CODE'", "Amount received offsets does not match 'NUMBER of OFFSETS'")
 if ( !$offsets or $consumer->last_error )
 {
-    fail "(".$consumer->last_errorcode.") ".$consumer->last_error;
+    fail "unable to receive offsets (".$consumer->last_errorcode.") ".$consumer->last_error;
 }
 
 # Consuming messages one by one
@@ -201,7 +201,7 @@ if ( $messages )
 # may be both physical and logical errors ("Checksum error", "Compressed payload", "Response contains an error in 'ERROR_CODE'")
 if ( !$messages or $consumer->last_error )
 {
-    fail "(".$consumer->last_errorcode.") ".$consumer->last_error;
+    fail "unable to receive messages (".$consumer->last_errorcode.") ".$consumer->last_error;
 }
 
 # Closes the consumer and cleans up

@@ -31,14 +31,21 @@ my $max_number  = 100;
 # control request
 my $request     =                               # OFFSETS       Request
     # Request Header
-     '00000018'                                 # REQUEST_LENGTH
-    .'0004'                                     # REQUEST_TYPE
-    .'0004'                                     # TOPIC_LENGTH
-    .'74657374'                                 # TOPIC ("test")
-    .'00000000'                                 # PARTITION
-    # OFFSETS Request
-    .'fffffffffffffffe'                         # TIME (-2 : earliest)
-    .'00000064'                                 # MAX NUMBER of OFFSETS (100)
+     '00000036'                 # Request Length
+    .'0002'                     # API Key
+    .'0000'                     # API Version
+    .'ffffffff'                 # Correlation ID
+    .'000a'                     # Client ID Length
+    .'7065726c2d6b61666b61'     # Client ID ("perl-kafka")
+    # Offset Request
+    .'ffffffff'     # Replica ID
+    .'00000001' # Number of Topics
+    .'0004' # Topic length
+    .'74657374' # Topic ("test")
+    .'00000001' # Number of Partitions
+    .'00000000' # Partition
+    .'fffffffffffffffe' # Time
+    .'00000064' # Max Number of Offsets
     ;
 
 # INSTRUCTIONS -----------------------------------------------------------------

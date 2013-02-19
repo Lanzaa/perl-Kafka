@@ -30,19 +30,31 @@ my $partition   = 0;
 my $single_message = "The first message";
 my $request_single =                            # PRODUCE Request - "no compression" now
     # Request Header
-     '0000002a'                                 # REQUEST_LENGTH
-    .'0000'                                     # REQUEST_TYPE
-    .'0004'                                     # TOPIC_LENGTH
-    .'74657374'                                 # TOPIC ("test")
-    .'00000000'                                 # PARTITION
-    # PRODUCE Request
-    .'0000001a'                                 # MESSAGES_LENGTH
-    # MESSAGE
-    .'00000016'                                 # LENGTH
-    .'00'                                       # MAGIC
-    .''                                         # COMPRESSION
-    .'d94a22be'                                 # CHECKSUM
-    .'546865206669727374206d657373616765'       # PAYLOAD ("The first message")
+     '0000005b'                                 # REQUEST_LENGTH
+    .'0000'                 # API KEY
+    .'0000'                 # API VERSION
+    .'ffffffff'                 # CORRELATION ID
+    .'000a'                     # CLient id length
+    .'7065726c2d6b61666b61'     # CLIENT ID (perl-kafka)
+    # Produce Request
+    .'ffff'                 # Required ACKS
+    .'00000000'     # TIMEOUT
+    .'00000001'     # Number of topics
+    .'0004'     # Topic length
+    .'74657374'     # Topic (test)
+    .'00000001'     # number of partitions
+    .'00000000'     # partition
+    .'0000002b'     # Messageset size
+    # Message Set
+    .'ffffffffffffffff' # Offset (-1)
+    .'0000001f'         # Message Size
+    # Message
+    .'dd1e9a39'                                 # Checksum
+    .'00'                                       # Magic
+    .'00'                                         # Attributes
+    .'ffffffff'                                 # Key size
+    .'00000011'                                 # Payload Size
+    .'546865206669727374206d657373616765'       # Payload ("The first message")
     ;
 
 # control request to a series of messages
@@ -53,30 +65,48 @@ my $series_of_messages = [
     ];
 my $request_series =                            # PRODUCE Request - "no compression" now
     # Request Header
-     '0000005f'                                 # REQUEST_LENGTH
-    .'0000'                                     # REQUEST_TYPE
-    .'0004'                                     # TOPIC_LENGTH
-    .'74657374'                                 # TOPIC ("test")
-    .'00000000'                                 # PARTITION
-    # PRODUCE Request
-    .'0000004f'                                 # MESSAGES_LENGTH
+     '000000b2'                                 # REQUEST_LENGTH
+    .'0000'                 # API KEY
+    .'0000'                 # API VERSION
+    .'ffffffff'                 # CORRELATION ID
+    .'000a'                     # CLient id length
+    .'7065726c2d6b61666b61'     # CLIENT ID (perl-kafka)
+    # Produce Request
+    .'ffff'                 # Required ACKS
+    .'00000000'     # TIMEOUT
+    .'00000001'     # Number of topics
+    .'0004'     # Topic length
+    .'74657374'     # Topic (test)
+    .'00000001'     # number of partitions
+    .'00000000'     # partition
+    .'00000082'     # Messageset size
+    # Message Set
     # MESSAGE
-    .'00000016'                                 # LENGTH
-    .'00'                                       # MAGIC
-    .''                                         # COMPRESSION
-    .'d94a22be'                                 # CHECKSUM
-    .'546865206669727374206d657373616765'       # PAYLOAD ("The first message")
+    .'ffffffffffffffff'     # Offset
+    .'0000001f'             # Message size
+    .'dd1e9a39'                                 # Checksum
+    .'00'                                       # Magic
+    .'00'                                       # Compression
+    .'ffffffff'                                 # Key
+    .'00000011'                                 # Length
+    .'546865206669727374206d657373616765'       # Payload ("The first message")
     # MESSAGE
-    .'00000017'                                 # LENGTH
-    .'00'                                       # MAGIC
-    .''                                         # COMPRESSION
-    .'a3810845'                                 # CHECKSUM
+    .'ffffffffffffffff'     # Offset
+    .'00000020'             # Message size
+    .'730fccd7'                                 # Checksum
+    .'00'                                       # Magic
+    .'00'                                       # Compression
+    .'ffffffff'                                 # Key
+    .'00000012'                                 # Length
     .'546865207365636f6e64206d657373616765'     # PAYLOAD ("The second message")
     # MESSAGE
-    .'00000016'                                 # LENGTH
-    .'00'                                       # MAGIC
-    .''                                         # COMPRESSION
-    .'58611780'                                 # CHECKSUM
+    .'ffffffffffffffff'     # Offset
+    .'0000001f'             # Message size
+    .'5c35af07'                                 # Checksum
+    .'00'                                       # Magic
+    .'00'                                       # Compression
+    .'ffffffff'                                 # Key
+    .'00000011'                                 # Length
     .'546865207468697264206d657373616765'       # PAYLOAD ("The third message")
     ;
 

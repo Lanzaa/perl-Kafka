@@ -40,14 +40,24 @@ my $max_size    = 1024 * 1024;                  # DEFAULT_MAX_SIZE
 # control request
 my $request     =                               # FETCH         Request
     # Request Header
-     '00000018'                                 # REQUEST_LENGTH
-    .'0001'                                     # REQUEST_TYPE
-    .'0004'                                     # TOPIC_LENGTH
-    .'74657374'                                 # TOPIC ("test")
-    .'00000000'                                 # PARTITION
-    # FETCH Request
-    .'0000000000000000'                         # OFFSET
-    .'00100000'                                 # MAX_SIZE (1MB)
+     '0000003e'                 # Request length
+    .'0001'                     # API Key 
+    .'0000'                     # API Version
+    .'ffffffff'                 # Correlation ID
+    .'000a'                     # Client ID Length
+    .'7065726c2d6b61666b61'     # Client ID ("perl-kafka")
+    # Fetch Request
+    .'ffffffff'                 # Replica ID
+    .'00000002'                 # Max Wait Time
+    .'00000001'                 # Min Bytes
+    # Topic Request
+    .'00000001' # Number of topics
+    .'0004' # Topic length
+    .'74657374' # Topic ("test")
+    .'00000001' # Number of partitions
+    .'00000000' # Patition
+    .'0000000000000000' # Fetch Offset
+    .'00100000' # Max Bytes
     ;
 
 # control sponse
@@ -198,16 +208,14 @@ $server = Kafka::Mock->new(
     requests    => {
         0   => '',                              # PRODUCE Request
         1   => $request,                        # FETCH Request
-        2   => '',                              # MULTIFETCH Request
-        3   => '',                              # MULTIPRODUCE Request
-        4   => '',                              # OFFSETS Request
+        2   => '',                              # OFFSET Request
+        3   => '',                              # METADATA Request
         },
     responses   => {
         0   => '',                              # PRODUCE Response
         1   => $response,                       # FETCH Response
-        2   => '',                              # MULTIFETCH Response
-        3   => '',                              # MULTIPRODUCE Response
-        4   => '',                              # OFFSETS Response
+        2   => '',                              # OFFSET Response
+        3   => '',                              # METADATA Response
         },
     );
 isa_ok( $server, 'Kafka::Mock');
