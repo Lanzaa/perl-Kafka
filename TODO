@@ -2,9 +2,6 @@
 Trying to bring everything up to 0.8 protocol
 
 TODO: (Unimplemented)
-    Metadata API
-        Metadata Request
-        Metadata Response
     Offset Commit/Fetch API
         Offset Commit Request
         Offset Commit Response
@@ -12,6 +9,9 @@ TODO: (Unimplemented)
         Offset Fetch Response
 
 TODO: (Very basic implementation so far)
+    Metadata API
+        Metadata Request
+        Metadata Response
     Produce API
         Produce Request
         Produce Response
