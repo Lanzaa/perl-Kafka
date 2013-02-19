@@ -11,9 +11,11 @@ our @EXPORT_OK  = qw(
     REQUESTTYPE_MULTIFETCH
     REQUESTTYPE_MULTIPRODUCE
     REQUESTTYPE_OFFSETS
+    metadata_request
     produce_request
     fetch_request
     offsets_request
+    metadata_response
     produce_response
     fetch_response
     offsets_response
@@ -138,6 +140,43 @@ sub _request_header_encode {
     return pack("l>", $len).$encoded;
 }
 
+# METADATA Request
+
+# TODO
+# expects a string or array of strings for the topic
+sub metadata_request {
+    my $topics           = shift;
+
+    (
+        _STRING( $topics ) or
+        _ARRAY0( $topics )
+    ) or return _error( ERROR_MISMATCH_ARGUMENT );
+
+    $topics = [ $topics ] if ( !ref( $topics ) );
+
+    # TODO Allow ack level to be set
+    # TODO Allow timeout to be set
+    my $encoded = pack("
+            l>          # Number of topics
+        ",
+            scalar(@$topics)
+         );
+
+    foreach my $topic (@$topics) {
+        $encoded .= pack("s>/a", $topic);
+    }
+
+    $encoded = _request_header_encode(
+            bytes::length( $encoded ),
+            APIKEY_METADATA,
+            CLIENT_ID,
+            ).$encoded;
+
+    return $encoded;
+}
+
+
+
 # PRODUCE Request --------------------------------------------------------------
 
 # LIMITATION: For all messages use the same properties:
@@ -219,10 +258,6 @@ sub _messageset_encode {
 
         my $attributes = $compression;
         my $key; # The key used to decide which partition the message is sent to
-
-        if ($key)  {
-            print STDERR "Key is alive\n";
-        }
 
         my $encoded_message = pack( "
                 c       # Magic
@@ -476,6 +511,120 @@ sub _response_header_decode {
     }
 
     return $header;
+}
+
+# Expects the response data
+# Returns (partitionid, partitiondata)
+sub _partitionmetadata_decode {
+    my $response = shift;
+
+    my $data = {};
+
+    (
+        $data->{error_code},
+        $data->{partid},
+        $data->{leader},
+    ) = unpack("x$position
+        s>          # Partition Error Code
+        l>          # Partition ID
+        l>          # Leader NodeID
+        ", $$response);
+    $position += 10;
+
+    my @replicas = unpack("x$position
+        l>/(l>)     # Replicas
+        ", $$response);
+    $position += 4 + 4*scalar(@replicas);
+
+    my @isr = unpack("x$position
+        l>/(l>)     # Insync Replicas
+        ", $$response);
+    $position += 4 + 4*scalar(@isr);
+
+    if (DEBUG) {
+        print STDERR ""
+        ."PARTITION             = $data->{partid}\n"
+        ."ERROR                 = $data->{error_code}\n"
+        ."LEADER                = $data->{leader}\n"
+        ."COUNT REPLICAS        = ".scalar(@replicas)."\n"
+        ."REPLICAS              = ".join(",", @replicas)."\n"
+        ."COUNT ISR             = ".scalar(@isr)."\n"
+        ."ISR                   = ".join(",", @isr)."\n"
+        ;
+    }
+    $data->{replicas} = \@replicas;
+    $data->{isr} = \@isr;
+    return ($data->{partid}, $data);
+}
+
+# METADATA Response
+
+sub metadata_response {
+    my $response = _SCALAR( shift ) or return _error( ERROR_MISMATCH_ARGUMENT );
+    _STRING( $$response ) or return _error( ERROR_MISMATCH_ARGUMENT );
+
+    # 16 minimum size of metadata response
+    return _error( ERROR_MISMATCH_ARGUMENT ) if bytes::length( $$response ) < 16;
+
+    my $decoded = {};
+    $decoded->{header} = _response_header_decode( $response );
+
+    # Unpack the broker metadata
+    my $num_brokers = unpack("x$position l>", $$response);
+    $position += 4;
+
+    for my $i (1..$num_brokers) {
+        my ($nodeid, $strlen, $host, $port) = unpack("x$position
+            l>      # NodeId
+            s>X2    # Strlen and go back
+            s>/a    # Host
+            l>      # Port
+            ", $$response);
+        $position += 10 + $strlen;
+
+        if ( DEBUG ) {
+            print STDERR "Decoded broker information:\n"
+                    ."NODEID        = $nodeid\n"
+                    ."HOST          = $host\n"
+                    ."PORT          = $port\n"
+                    ;
+        }
+        
+        $decoded->{brokers}{$nodeid} = [$host, $port];
+    }
+
+    # Unpack the Topic Metadata
+    my $num_topics = unpack("x$position l>", $$response);
+    $position += 4;
+
+    for my $i (1..$num_topics) {
+        my ($error_code, $strlen, $topic, $num_partitions) = unpack("x$position
+            s>      # Topic Error Code
+            s>X2    # Strlen
+            s>/a    # Topic
+            l>      # Number of partitions for this topic
+        ", $$response);
+        $position += 8 + $strlen;
+
+        if (DEBUG) {
+            print STDERR "Decoded Topic:\n"
+                ."NAME              = $topic\n"
+                ."PARTITION COUNT   = $num_partitions\n"
+                ;
+        }
+
+        $decoded->{topics}{$topic} = { 
+            error_code => $error_code,
+            num_partitions => $num_partitions
+        };
+
+        # Decode each partition
+        for my $j (1..$num_partitions) {
+            my ($partid, $data) = _partitionmetadata_decode($response);
+            $decoded->{topics}{$topic}{partitions}{$partid} = $data;
+        }
+    }
+    return $decoded;
 }
 
 # PRODUCE Response

@@ -24,6 +24,7 @@ use Kafka qw(
     ERROR_CANNOT_RECV
     ERROR_CANNOT_BIND
     );
+use Kafka::Protocol qw( metadata_request metadata_response );
 
 our $_last_error;
 our $_last_errorcode;
@@ -276,6 +277,55 @@ sub RaiseError {
     my $self = shift;
 
     return $self->{RaiseError};
+}
+
+sub request_metadata {
+    my $self = shift;
+    my $topics = shift;
+
+    (
+        _STRING( $topics ) or
+        _ARRAY0( $topics )
+    ) or return _error( ERROR_MISMATCH_ARGUMENT );
+
+    my $sent;
+    eval { $sent = $self->send( metadata_request( $topics ) ) };
+    unless (defined( $sent )) {
+        # TODO handle errors
+        die("[BUG] Not implemented.");
+        # return error codes
+    }
+
+    my $decoded = {};
+    eval { $decoded = $self->_receive_metadata() };
+
+    if ($@) {
+        print "request error: ".Dumper($@);
+    }
+
+    # TODO handle errors
+    return $decoded;
+}
+
+sub _receive_metadata {
+    my $self = shift;
+
+    my $response = {};
+    my $message = $self->receive( 4 );
+    # TODO return error { unless( $message and defined $$message ) }
+    my $tail = $self->receive( unpack( "N", $$message) );
+    # TODO return error { unless( $message and defined $$message ) }
+
+    $$message .= $$tail;
+
+    my $decoded = metadata_response( $message );
+#    unless ( $response->{error_code} = $decoded->{header}->{error_code} )
+#    {
+#        $response->{messages} = [] unless defined $response->{messages};
+#        push @{$response->{messages}}, @{$decoded->{messages}};
+#    }
+
+    return $decoded;
 }
 
 sub DESTROY {
