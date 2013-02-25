@@ -714,8 +714,6 @@ sub fetch_response {
                 $decoded->{messages} = _messageset_decode( $position+$messageset_size, $response ) unless $error_code;
             }
         }
-
-        #$decoded->{messages}    = _messages_decode( $response ) unless $decoded->{header}->{error_code};
     }
 
     return $decoded;
@@ -806,7 +804,7 @@ Apache Kafka's 0.7 Wire Format
 
 =head1 VERSION
 
-This documentation refers to C<Kafka::Consumer> version 0.10
+This documentation refers to C<Kafka::Consumer> version 0.20
 
 =head1 SYNOPSIS
 

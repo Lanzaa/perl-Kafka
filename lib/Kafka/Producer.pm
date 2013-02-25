@@ -6,7 +6,7 @@ use warnings;
 
 # Basic functionalities to include a simple Producer
 
-our $VERSION = '0.10';
+our $VERSION = '0.20';
 
 use Carp;
 use Params::Util qw( _INSTANCE _STRING _NONNEGINT _ARRAY0 );
@@ -171,7 +171,7 @@ Kafka::Producer - object interface to the producer client
 
 =head1 VERSION
 
-This documentation refers to C<Kafka::Producer> version 0.10
+This documentation refers to C<Kafka::Producer> version 0.20
 
 =head1 SYNOPSIS
 
