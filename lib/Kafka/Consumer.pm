@@ -159,18 +159,16 @@ sub fetch {
         my $next_offset = $offset;
         foreach my $message ( @{$decoded->{messages}} )
         {
-            # To find the offset of the next message,
-            # take the offset of this message (that you made in the request),
-            # and add LENGTH + 4 bytes (length of this message + 4 byte header to represent the length of this message).
+            # find the offset of the next message,
             if ( BITS64 )
             {
                 $message->{offset} = $next_offset;
-                $next_offset += $message->{length} + 4;
+                $next_offset += 1;
             }
             else
             {
                 $message->{offset} = Kafka::Int64::intsum( $next_offset, 0 );
-                $next_offset = Kafka::Int64::intsum( $next_offset, $message->{length} + 4 );
+                $next_offset = Kafka::Int64::intsum( $next_offset, 1 );
             }
             $message->{next_offset} = $next_offset;
             push @$response, Kafka::Message->new( $message )
