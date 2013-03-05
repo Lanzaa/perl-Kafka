@@ -27,6 +27,7 @@ use bytes;
 use Carp;
 use Digest::CRC     qw( crc32 );
 use Params::Util    qw( _STRING _NONNEGINT _POSINT _NUMBER _ARRAY0 _SCALAR );
+use IO::Uncompress::Gunzip qw{ gunzip };
 
 use Kafka qw(
     ERROR_INVALID_MESSAGE_CODE
@@ -282,30 +283,48 @@ sub _messageset_encode {
     return $encoded;
 }
 
+##
+# Expects a buffer_hr and an end position
+#
+# Returns an array of messages
+##
 sub _messageset_decode {
+    my $buffer_hr   = shift;
     my $end         = shift;
-    my $response    = shift;               # requires a reference
+
+    my $pos = $buffer_hr->{position};
+    my $response = $buffer_hr->{data};
+
+    if ( DEBUG ) {
+        print STDERR "Decoding message set:\n"
+            ."pos           = '$$pos'\n"
+            ."end           = '$end'\n"
+            ."response      = '".unpack("H*", $$response)."'\n"
+            ;
+    }
 
     my $decoded_messages = [];
 
     # 12 = length( OFFSET + LENGTH )
-    while ( $end - $position > 12 ) {
+    while ( $end - $$pos > 12 ) {
         my $message = {};
 
         my $offset = BITS64     # OFFSET
-          ? unpack("x$position q>", $$response )
-          : Kafka::Int64::unpackq( unpack( "x$position a8", $$response ) );
-        $position += 8;
-        my $length = unpack("x$position l>", $$response);
-        $position += 4;
+          ? unpack("x$$pos q>", $$response )
+          : Kafka::Int64::unpackq( unpack( "x$$pos a8", $$response ) );
+        $$pos += 8;
+        my $length = unpack("x$$pos l>", $$response);
+        $$pos += 4;
 
-        last if ( ( $end - $position ) < $length ); # Incomplete message
+        last if ( ( $end - $$pos ) < $length ); # Incomplete message
 
-        $message = _decode_message($length, $response);
-        $message->{valid} = ! $message->{error};
-        $message->{offset} = $offset;
+        my $msg_array = _decode_message( $buffer_hr, $length ); #$length, $response);
+        for my $message (@$msg_array) {
+            $message->{valid} = ! $message->{error};
+            $message->{offset} = $offset;
+            push @$decoded_messages, $message;
+        }
 
-        push @$decoded_messages, $message;
     }
 
     if ( DEBUG )
@@ -329,9 +348,20 @@ sub _messageset_decode {
     return $decoded_messages;
 }
 
+##
+# Expects a buffer_hr and the length of the message to expect.
+#
+# The length is used to calculate the checksum of the message.
+#
+# Returns an array of messages.
+##
 sub _decode_message {
+    my $buffer_hr = shift; # The buffer_hr
     my $length = shift; # The length of the message
-    my $response = shift; # The full response 
+
+    my $response = $buffer_hr->{data};
+    my $pos = $buffer_hr->{position};
+
     my $message = {};
     $message->{error} = "";
     $message->{length} = $length;
@@ -343,26 +373,33 @@ sub _decode_message {
         $message->{magic},
         $message->{attributes},
         $key_size,
-    ) = unpack("x$position
+    ) = unpack("x$$pos
         L>          # Checksum
         c           # MagicByte
         c           # Attributes
         l>          # Key size
         ", $$response);
-    $position += 4; # Just the checksum
-    $message->{error} = $Kafka::ERROR[ERROR_CHECKSUM_ERROR] if $message->{checksum} != crc32( unpack("x$position a".($length-4), $$response ));
-    $position += 1 + 1 + 4; # Consume the bytes and key size
+    $$pos += 4; # Just the checksum
+    my $checksum_calculated = crc32(
+        unpack("x$$pos a".($length-4), $$response )
+    );
+    $$pos += 1 + 1 + 4; # Consume the bytes and key size
 
-    if ($key_size >= 0) {
-        $message->{key} = unpack("x$position a$key_size", $$response);
-        $position += $key_size;
+    if ($message->{checksum} != $checksum_calculated) {
+        $message->{error} = $Kafka::ERROR[ERROR_CHECKSUM_ERROR];
+        return \[$message]; # TODO TEST
     }
 
-    $payload_size = unpack("x$position l>", $$response);
-    $position += 4;
+    if ($key_size >= 0) {
+        $message->{key} = unpack("x$$pos a$key_size", $$response);
+        $$pos += $key_size;
+    }
+
+    $payload_size = unpack("x$$pos l>", $$response);
+    $$pos += 4;
     if ($payload_size >= 0) {
-        $message->{payload} = unpack("x$position a$payload_size", $$response);
-        $position += $payload_size;
+        $message->{payload} = unpack("x$$pos a$payload_size", $$response);
+        $$pos += $payload_size;
     }
 
     if ($message->{magic}) {
@@ -370,19 +407,31 @@ sub _decode_message {
         die("[BUG] Handling more magic is not implemented.");
     }
 
+    my $out;
     # Parse the attributes. This should be based on the magic version
     $message->{compression} = ($message->{attributes} & 0x3);
     if ($message->{compression} == COMPRESSION_NO_COMPRESSION) {
-        # Good
-    } elsif ($message->{compression} == COMPRESSION_GZIP) {
-        die("[BUG] GZIP compressed messages has not been implemented.");
-    } elsif ($message->{compression} == COMPRESSION_SNAPPY) {
-        die("[BUG] SNAPPY compressed messaged has not been implemented.");
+        $out = [$message]; # Easy
     } else {
-        die("[ERROR] Unknown compression type found.");
+        # Handle compression
+        my $pos = 0;
+        my $data = '';
+        if ($message->{compression} == COMPRESSION_GZIP) {
+            gunzip(\$message->{payload} => \$data);
+        } elsif ($message->{compression} == COMPRESSION_SNAPPY) {
+            die("[BUG] SNAPPY compressed messaged has not been implemented.");
+        } else {
+            die("[ERROR] Unknown compression type found.");
+        }
+        my $buf_hr = {
+            data => \$data,
+            position => \$pos,
+        };
+        $out = _messageset_decode( $buf_hr, bytes::length($data) );
+        $buf_hr = undef;
     }
 
-    return $message;
+    return $out;
 }
 
 # FETCH Request ----------------------------------------------------------------
@@ -631,47 +680,7 @@ sub metadata_response {
 
 sub produce_response {
     die("[BUG] Not implemented silly one.");
-    my $response = _SCALAR( shift ) or return _error( ERROR_MISMATCH_ARGUMENT );
-
-    _STRING( $$response ) or return _error( ERROR_MISMATCH_ARGUMENT );
-    # 6 = length( RESPONSE_LENGTH + ERROR_CODE )
-    return _error( ERROR_MISMATCH_ARGUMENT ) if bytes::length( $$response ) < 6;
-
-    my $decoded = {};
-    if ( scalar keys %{ $decoded->{header} = _response_header_decode( $response ) } )
-    {
-        my $topic_count = unpack("x$position l>", $$response);
-        $position += 4;
-        for my $i (1 .. $topic_count) {
-            my ($strlen, $topic, $partition_count) = 
-                unpack("x$position s>X2 s>/a l>", $$response);
-            $position += 6 + $strlen;
-
-            for my $j (1 .. $partition_count) {
-                my ($partition, $error_code, $highwaterp, $messageset_size) =
-                    unpack("x$position l> s> a8 l>", $$response);
-                $position += 18;
-                my $highwater = BITS64     # OFFSET
-                  ? unpack("q>", $highwaterp )
-                  : Kafka::Int64::unpackq($highwaterp);
-
-                if (DEBUG) {
-                    print STDERR ""
-                        ."partition         = $partition\n"
-                        ."error code        = $error_code\n"
-                        ."message set size  = $messageset_size\n"
-                        ;
-                }
-                $decoded->{header}->{error_code} = $error_code;
-                $decoded->{messages} = _messageset_decode( $position+$messageset_size, $response ) unless $error_code;
-            }
-        }
-
-        #$decoded->{messages}    = _messages_decode( $response ) unless $decoded->{header}->{error_code};
-    }
-
-    return $decoded;
-
+    #return $decoded;
 }
 
 #   None
@@ -711,7 +720,8 @@ sub fetch_response {
                         ;
                 }
                 $decoded->{header}->{error_code} = $error_code;
-                $decoded->{messages} = _messageset_decode( $position+$messageset_size, $response ) unless $error_code;
+                my $buf_obj = { data => $response, position => \$position };
+                $decoded->{messages} = _messageset_decode( $buf_obj, $position+$messageset_size ) unless $error_code;
             }
         }
     }
@@ -1063,6 +1073,11 @@ recognized:
 =item C<$response>
 
 C<$response> is a reference to the FETCH Response buffer.
+The buffer must be a non-empty string 6+ bytes long.
+
+=item C<$buffer_hr>
+
+C<$buffer_hr> is a reference to a hash containing the buffer and position within the buffer.
 The buffer must be a non-empty string 6+ bytes long.
 
 =back
