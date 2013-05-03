@@ -12,6 +12,8 @@ our @EXPORT_OK  = qw(
     REQUESTTYPE_MULTIPRODUCE
     REQUESTTYPE_OFFSETS
     metadata_request
+    metadata_request_ng
+    request_header_encode
     produce_request
     fetch_request
     offsets_request
@@ -19,6 +21,7 @@ our @EXPORT_OK  = qw(
     produce_response
     fetch_response
     offsets_response
+    APIKEY_METADATA
     );
 
 our $VERSION = '0.10';
@@ -141,6 +144,52 @@ sub _request_header_encode {
     return pack("l>", $len).$encoded;
 }
 
+##
+# Used to create a header for a Kafka request
+#
+# Expects:
+#   * request length - the length of the request
+#   * apikey - the apikey for the type of request
+#   * clientId - the clients id
+#   * correlationId - correlation id for identifying the response
+# Returns:
+#   the packed header
+##
+sub request_header_encode {
+    my $request_length  = shift;
+    my $request_type    = shift;
+    my $client_id       = shift;
+    my $correlation_id  = shift;
+    my $api = 0;
+
+    my $encoded = pack("
+        s>      # ApiKey
+        s>      # ApiVersion
+        l>      # Correlation id
+        s>/a   # length of client_id string
+        ",
+        $request_type,
+        $api,
+        $correlation_id,
+        $client_id,
+    );
+
+    my $len = $request_length + bytes::length($encoded);
+
+    if ( DEBUG )
+    {
+        print STDERR "Request header:\n"
+            ."REQUEST_LENGTH    = ".($len)."\n"
+            ."REQUEST_TYPE      = $request_type\n"
+            ."CLIENT_ID         = $client_id\n"
+            ."CORR_ID           = $correlation_id\n"
+            ."API Version       = $api\n"
+        ;
+    }
+
+    return pack("l>", $len).$encoded;
+}
+
 # METADATA Request
 
 # TODO
@@ -175,6 +224,37 @@ sub metadata_request {
 
     return $encoded;
 }
+
+##
+# Used to encode topics into a metadata request
+#
+# Returns:
+#   a reference to encoded data
+##
+sub metadata_request_ng {
+    my $topics = shift;
+
+    (
+        _STRING( $topics ) or
+        _ARRAY0( $topics )
+    ) or return _error( ERROR_MISMATCH_ARGUMENT );
+
+    $topics = [ $topics ] if ( !ref( $topics ) );
+
+    my $encoded = pack("
+            l>          # Number of topics
+        ",
+            scalar(@$topics)
+         );
+
+    foreach my $topic (@$topics) {
+        $encoded .= pack("s>/a", $topic);
+    }
+
+    return \$encoded;
+}
+
+
 
 
 

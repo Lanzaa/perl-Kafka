@@ -16,6 +16,7 @@ use Kafka qw(
     ERROR_CANNOT_SEND
     );
 use Kafka::Protocol qw( produce_request produce_response );
+use Kafka::BrokerChannel;
 
 our $_last_error;
 our $_last_errorcode;
@@ -32,7 +33,22 @@ sub new {
         RaiseError      => 0,
     };
 
+    ## opts:
+    # * IO - pass your own brokerchannel. used for debuging/testing
+    # * broker_list - pass a list of brokers to bootstrap from
+    # * timeout - 
+    # * topics - limit the metadata initialization to a specific set of topics
 
+    if (defined($opts{IO})) {
+        $self->{IO} = $opts{IO};
+    } elsif (defined($opts{broker_list})) {
+        print STDERR "broker_list: '$opts{broker_list}'\n";
+        $self->{IO} = Kafka::BrokerChannel->new(
+            broker_list => $opts{broker_list},
+        );
+    } else {
+        croak("A broker_list must be supplied.");
+    }
 
     my @args = @_;
     while ( @args )

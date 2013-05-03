@@ -12,6 +12,11 @@ use Params::Util qw( _STRING );
 use Kafka qw(
     DEFAULT_TIMEOUT
     );
+use Kafka::Protocol qw( 
+    APIKEY_METADATA
+    metadata_request_ng
+    request_header_encode
+    );
 use Kafka::IO;
 
 our $DEBUG = 1;
@@ -25,6 +30,7 @@ BEGIN { if($DEBUG) { use Data::Dumper; } }
 #
 ##
 # TODO: pod, impl
+# * allow passing of a list of topics
 sub new {
     my ($class, %opt) = @_;
 
@@ -44,7 +50,8 @@ sub new {
     }
     $self->{broker_list} = $opt{broker_list};
 
-    $self->_init(); # initialize connections
+    # Bootstrap and initialize all connections
+    $self->_init([]); # TODO allow passing of limited topics
     # TODO: implement
     #die("[BUG] brokerchannel is not implemented");
     return $self;
@@ -56,21 +63,42 @@ sub new {
 # TODO: warnings
 sub _init {
     my $self = shift;
+    my @topics = @_;
     my @brokers = split(",", $self->{broker_list});
+    # There are several stages
+    # 1. Bootstrap - use the list of brokers to find all the other brokers. we
+    #       will stop at the first successfull connection
+    # 2. Metadata Grab - use the established connection to grab metadata for
+    #       the broker set. cache the topic metadata
+    # 3. Connect - connect to all of the brokers specified in the metadata.
+    #       maintain these connections in a hash { brokerId => Kafka::IO }
+    my $io = undef;
     foreach my $broker (@brokers) {
-        # TODO: connect to broker
         my ($host, $port) = split(":", $broker);
-        my $io = Kafka::IO->new(
+        $io = Kafka::IO->new(
             host => $host,
             port => $port,
-            timeout => $self->{timeout},
+            timeout => $self->{timeout}, # XXX: do we need a timeout here?
         );
         if (defined($io)) {
-            $self->{connections}->{$broker} = $io;
+            last; # We have a connection, get out of here
         } else {
-            # TODO warn connection to broker failed
+            # TODO warn connection to boostrap broker failed
         }
     }
+    # should have a valid IO connection
+    if (!defined($io)) {
+        croak("Unable to connect to a valid Kafka broker.");
+    }
+    my $metadata = $io->request_metadata(@topics);
+
+    my $ret = $self->_refreshMetadata($io, @topics);
+
+    print STDERR "metadata: ".Dumper($metadata);
+    print STDERR "ret: ".Dumper($ret);
+
+
+
 }
 
 ##
@@ -101,9 +129,83 @@ sub sendSyncRequest {
     my ($self, $brokerId, $apiKey, $dataRef) = @_;
     confess("sendRequest is not yet implemented");
 
-    ( # TODO argument checking
-        1
-    ) or return $self->_error(ERROR_MISMATCH_ARGUMENT);
+    my $io = $self->{connections}->{$brokerId};
+    if (defined($io)) {
+        return $self->_sendIO($io, $apiKey, $dataRef);
+    }
+    confess("Unable to send request, unknown brokerId.");
+    return -1;
+}
+
+##
+# Used to send a request over a specific IO connection.
+# 
+# Expects:
+#   * Kafka::IO
+#   * a ref to the packed request
+##
+# TODO: impl, notes, test
+sub _sendIO {
+    my $self = shift;
+    my ($io, $apiKey, $correlationId, $dataRef) = @_;
+
+    # TODO pack headers
+    my $encoded = request_header_encode(
+        bytes::length( $$dataRef ),
+        $apiKey,
+        $self->{clientId} || "CLIENTIDFORKAFKAPERL", # XXX create a client id
+        $correlationId,
+    ).$$dataRef;
+
+    my $error = $io->send($encoded);
+    return $error;
+}
+
+##
+# Used to receive a response over a specific IO connection.
+#
+# Expects:
+#   * Kafka::IO
+# Returns:
+#   the packed data corresponding to the request (see code for format)
+##
+sub _receiveIO {
+    my $self = shift;
+    my $io = shift;
+    my $packedSize = $io->receive(4); # Get the size
+    my $message = $io->receive(unpack("N", $$packedSize));
+    unless($message and defined($$message)) {
+        confess("Something died in receiveIO");
+        return -1; # XXX some error code
+    }
+    my $data = {
+        correlationId => unpack("N", $$message),
+        data => $$message,
+        position => 4, # just unpacked 4 bytes from the message
+    };
+    return $data;
+}
+
+
+
+##
+# Used to refresh metadata
+#
+# Expects:
+#   * Kafka::IO
+# Returns:
+# TODO messages!
+##
+# TODO: impl, test
+sub _refreshMetadata {
+    my $self = shift;
+    my ($io, @topics) = @_;
+    my $data = metadata_request_ng(\@topics);
+    my $correlationId = 9; # XXX get a real id
+    my $error = $self->_sendIO($io, APIKEY_METADATA, $correlationId, $data);
+
+    my $received = $self->_receiveIO($io);
+    print STDERR "received some data: ".Dumper(\$received);
 
 }
 
