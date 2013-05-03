@@ -22,19 +22,13 @@ my $server = Kafka::Mock->new(
     );
 isa_ok( $server, 'Kafka::Mock' );
 
-my $io = Kafka::IO->new(
-    host        => "localhost",
-    port        => $server->port,
-    );
-isa_ok( $io, 'Kafka::IO' );
-
 # INSTRUCTIONS -----------------------------------------------------------------
 
 # -- verify load the module
 BEGIN { use_ok 'Kafka::Producer' }
 
 my $producer = Kafka::Producer->new(
-    IO          => $io,
+    broker_list => "localhost:$server->port",
     );
 unless ( $producer )
 {

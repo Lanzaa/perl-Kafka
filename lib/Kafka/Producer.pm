@@ -20,12 +20,19 @@ use Kafka::Protocol qw( produce_request produce_response );
 our $_last_error;
 our $_last_errorcode;
 
+
 sub new {
-    my $class   = shift;
+    my ($class, %opts) = @_;
     my $self = {
-        IO              => undef,
+        # TODO:
+        # retry count
+        # metadata cache
+        # metadata object?
+        IO              => undef, # a BrokerChannel
         RaiseError      => 0,
-        };
+    };
+
+
 
     my @args = @_;
     while ( @args )
@@ -43,12 +50,112 @@ sub new {
         return $self->_error( ERROR_MISMATCH_ARGUMENT );
     }
     $self->{last_error} = $self->{last_errorcode} = $_last_error = $_last_errorcode = undef;
-    _INSTANCE( $self->{IO}, 'Kafka::IO' ) or return $self->_error( ERROR_MISMATCH_ARGUMENT );
+    # XXX: todo
+    # _INSTANCE( $self->{IO}, 'Kafka::IO' ) or return $self->_error( ERROR_MISMATCH_ARGUMENT );
 
     $_last_error        = $_last_errorcode          = undef;
     $self->{last_error} = $self->{last_errorcode}   = undef;
 
     return $self;
+}
+
+##
+# Expects an array of keyed messages
+# keyed message = (topic, key, data) # XXX really?
+##
+# TODO: test cases, impl
+# test with single keyed message
+# test with multiple keyed messages
+# test usage error, what happens when people dont put in keyedmessages
+sub sendKeyedMessages {
+    my ($self, @msgs) = @_;
+
+    my $partitionedData = $self->partitionAndCollate(@msgs);
+    foreach my $brokerId (keys $partitionedData) {
+        if ($brokerId == -1) {
+            # TODO: do something with the messages we cannot send
+        } else {
+            # TODO: construct and send request to broker
+        }
+    }
+}
+
+##
+# Used to group messages together to send as a group to each broker.
+# keyed message = (topic, key, data) # XXX really?
+#
+# Expects an array of keyed messages
+# Returns a hash of 
+# {
+#   brokerId => { 
+#       topic => { 
+#           partition => [messages],
+#           partition => [messages], 
+#       },
+#       topic => { ... },
+#   },
+#   brokerId => { ... },
+# }
+##
+# TODO: test
+sub partitionAndCollate {
+    my ($self, @msgs) = @_;
+    my $ret = {};
+    foreach my $keyedMsg (@msgs) {
+        my $topic = $keyedMsg->{topic};
+        my $key = $keyedMsg->{key};
+        my $topicPartitions = $self->getPartionsForTopic($topic);
+        my $partitionIndex = $self->getPartition($key, $topic, $topicPartitions);
+        my $brokerId = -1; # Placeholder for invalid brokerId
+        if (defined($topicPartitions->{$partitionIndex})) {
+            $brokerId = $topicPartitions->{$partitionIndex};
+        }
+        $ret->{$brokerId} = {}
+            unless (exists($ret->{$brokerId}));
+        $ret->{$brokerId}->{$topic} = {}
+            unless (exists($ret->{$brokerId}->{$topic}));
+        $ret->{$brokerId}->{$topic}->{$partitionIndex} = [] 
+            unless (exists($ret->{$brokerId}->{$topic}->{$partitionIndex}));
+        push(@{$ret->{$brokerId}->{$topic}->{$partitionIndex}}, $keyedMsg->{data});
+    }
+    return $ret;
+}
+
+##
+# Used to get the partition for a key. This is where custom partitioners could get plugged in.
+#
+# Expects a key, a topic, and a hash from the function getPartionsForTopic.
+# Returns the partitionId for the key
+##
+# TODO: 
+# * add ability for users of this library to plug in their own partitioner
+# ** let them set an object or something
+sub getPartition {
+    my ($self, $key, $topic, $partitions) = @_;
+    # XXX: Just doing the dumb, modulo key. should fix
+    my @partitionIds = keys %$partitions;
+    my $partitionCount = @partitionIds;
+    return $partitionIds[$key%$partitionCount];
+}
+
+##
+# Used to list the set of (topic, partitionId, leaderId) for each topic.
+#
+# Expects a topic name
+# Returns a hash of
+# {
+#   partitionId => leaderId,
+#   partitionId => leaderId,
+#   ...
+# }
+##
+# TODO: tests, implement
+# mock in some metadata and ensure this creates the proper return
+sub getPartionsForTopic {
+    my ($self, $topic) = @_;
+    # TODO: use the metadata!
+    warn("[BUG] getPartitionsForTopic not implemented, continuing");
+    return { 6 => 20, 0 => 1, 1 => 3, 2 => 9 };
 }
 
 sub last_error {

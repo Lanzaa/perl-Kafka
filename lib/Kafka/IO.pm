@@ -286,7 +286,7 @@ sub request_metadata {
     (
         _STRING( $topics ) or
         _ARRAY0( $topics )
-    ) or return _error( ERROR_MISMATCH_ARGUMENT );
+    ) or return $self->_error( ERROR_MISMATCH_ARGUMENT );
 
     my $sent;
     eval { $sent = $self->send( metadata_request( $topics ) ) };
