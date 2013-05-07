@@ -15,6 +15,7 @@ use Kafka qw(
 use Kafka::Protocol qw( 
     APIKEY_METADATA
     metadata_request_ng
+    metadata_response_ng
     request_header_encode
     );
 use Kafka::IO;
@@ -63,7 +64,7 @@ sub new {
 # TODO: warnings
 sub _init {
     my $self = shift;
-    my @topics = @_;
+    my $topics = shift;
     my @brokers = split(",", $self->{broker_list});
     # There are several stages
     # 1. Bootstrap - use the list of brokers to find all the other brokers. we
@@ -73,6 +74,8 @@ sub _init {
     # 3. Connect - connect to all of the brokers specified in the metadata.
     #       maintain these connections in a hash { brokerId => Kafka::IO }
     my $io = undef;
+
+    # 1. Bootstrap
     foreach my $broker (@brokers) {
         my ($host, $port) = split(":", $broker);
         $io = Kafka::IO->new(
@@ -84,21 +87,34 @@ sub _init {
             last; # We have a connection, get out of here
         } else {
             # TODO warn connection to boostrap broker failed
+            warn("Unable to bootstrap with broker: '$host:$port'");
         }
     }
     # should have a valid IO connection
     if (!defined($io)) {
         croak("Unable to connect to a valid Kafka broker.");
     }
-    my $metadata = $io->request_metadata(@topics);
 
-    my $ret = $self->_refreshMetadata($io, @topics);
+    # 2. Grab metadata
+    $self->_refreshMetadata($io, @$topics);
 
-    print STDERR "metadata: ".Dumper($metadata);
-    print STDERR "ret: ".Dumper($ret);
+    # 3. Connect
+    my $broker_metadata = $self->{metadata}->{brokers};
+    foreach my $brokerId (keys $broker_metadata) {
+        my ($host, $port) = @{$broker_metadata->{$brokerId}};
+        my $broker_io = Kafka::IO->new(
+            host => $host,
+            port => $port,
+            timeout => $self->{timeout},
+        );
+        if (defined($io)) {
+            $self->{connections}->{$brokerId} = $broker_io;
+        } else {
+            warn("Unable to connect to remote broker '$host:$port'\n");
+        }
+    }
 
-
-
+    return;
 }
 
 ##
@@ -176,7 +192,6 @@ sub _receiveIO {
     my $message = $io->receive(unpack("N", $$packedSize));
     unless($message and defined($$message)) {
         confess("Something died in receiveIO");
-        return -1; # XXX some error code
     }
     my $data = {
         correlationId => unpack("N", $$message),
@@ -186,7 +201,19 @@ sub _receiveIO {
     return $data;
 }
 
-
+##
+# Used to just get a list of topics that this object knows about
+#
+# Expects:
+# Returns:
+#   * An array of strings representing topics
+##
+# TODO: docs
+sub topic_list {
+    my $self = shift;
+    my @topics = keys $self->{metadata}->{topics};
+    return @topics;
+}
 
 ##
 # Used to refresh metadata
@@ -194,19 +221,22 @@ sub _receiveIO {
 # Expects:
 #   * Kafka::IO
 # Returns:
-# TODO messages!
+#   Nothing
 ##
-# TODO: impl, test
+# TODO: test
 sub _refreshMetadata {
     my $self = shift;
     my ($io, @topics) = @_;
     my $data = metadata_request_ng(\@topics);
-    my $correlationId = 9; # XXX get a real id
+    my $correlationId = int(rand(2000000000)); # XXX get a real id
     my $error = $self->_sendIO($io, APIKEY_METADATA, $correlationId, $data);
-
     my $received = $self->_receiveIO($io);
-    print STDERR "received some data: ".Dumper(\$received);
-
+    if ($received->{correlationId} != $correlationId) {
+        confess("Something went wrong when requesting metadata.");
+    }
+    my $metadata = metadata_response_ng($received);
+    $self->{metadata} = $metadata;
+    $self->{metadata}->{refreshed} = time();
 }
 
 

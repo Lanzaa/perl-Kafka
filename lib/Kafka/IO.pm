@@ -14,6 +14,7 @@ use Errno;
 use Fcntl;
 use Socket;
 use Time::HiRes qw( alarm );
+use Data::Dumper;
 
 use Kafka qw(
     KAFKA_SERVER_PORT

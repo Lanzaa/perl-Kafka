@@ -18,6 +18,7 @@ our @EXPORT_OK  = qw(
     fetch_request
     offsets_request
     metadata_response
+    metadata_response_ng
     produce_response
     fetch_response
     offsets_response
@@ -31,6 +32,8 @@ use Carp;
 use Digest::CRC     qw( crc32 );
 use Params::Util    qw( _STRING _NONNEGINT _POSINT _NUMBER _ARRAY0 _SCALAR );
 use IO::Uncompress::Gunzip qw{ gunzip };
+
+use Data::Dumper;
 
 use Kafka qw(
     ERROR_INVALID_MESSAGE_CODE
@@ -350,12 +353,12 @@ sub _messageset_encode {
             .( $key ? pack("l>/a", $key) : pack("l>", -1) )
             .( $message ? pack("l>/a", $message) : pack("l>", -1) )
             ;
-        $encoded .= ( BITS64 
-                    ? pack( "q>", SENTINEL_OFFSET ) 
+        $encoded .= ( BITS64
+                    ? pack( "q>", SENTINEL_OFFSET )
                     : Kafka::Int64::packq( SENTINEL_OFFSET ) )   # OFFSET
-            .pack("l> L> a* ", 
-                4+bytes::length($encoded_message), 
-                crc32($encoded_message), 
+            .pack("l> L> a* ",
+                4+bytes::length($encoded_message),
+                crc32($encoded_message),
                 $encoded_message
             );
     }
@@ -581,7 +584,7 @@ sub offsets_request {
     # TODO Allow multiple partition requests?
     my $encoded = pack("l>l>", -1, 1); # Replica id and topic count
     $encoded .= pack("s>/a", $topic);
-    $encoded .= pack("l>l>", 1, $partition); 
+    $encoded .= pack("l>l>", 1, $partition);
     $encoded .= ( BITS64 ? pack( "q>", $time + 0 ) : Kafka::Int64::packq( $time + 0 ) );   # TIME
     $encoded .= pack( "
                       N                                   # MAX_NUMBER
@@ -686,7 +689,119 @@ sub _partitionmetadata_decode {
     return ($data->{partid}, $data);
 }
 
+
+##
+# Used to decode the metadata for each partition. This should only
+# be used in the metadata response decoder. I feel it is long enough
+# to pull out.
+##
+sub _partitionmetadata_decode_ng {
+    my $response = shift;
+
+    my $data = {};
+
+    (
+        $data->{error_code},
+        $data->{partid},
+        $data->{leader},
+    ) = unpack("x$response->{position}
+        s>          # Partition Error Code
+        l>          # Partition ID
+        l>          # Leader NodeID
+        ", $response->{data});
+    $response->{position} += 10;
+
+    my @replicas = unpack("x$response->{position}
+        l>/(l>)     # Replicas
+        ", $response->{data});
+    $response->{position} += 4 + 4*scalar(@replicas);
+
+    my @isr = unpack("x$response->{position}
+        l>/(l>)     # Insync Replicas
+        ", $response->{data});
+    $response->{position} += 4 + 4*scalar(@isr);
+
+    if (DEBUG) {
+        print STDERR ""
+        ."PARTITION             = $data->{partid}\n"
+        ."ERROR                 = $data->{error_code}\n"
+        ."LEADER                = $data->{leader}\n"
+        ."COUNT REPLICAS        = ".scalar(@replicas)."\n"
+        ."REPLICAS              = ".join(",", @replicas)."\n"
+        ."COUNT ISR             = ".scalar(@isr)."\n"
+        ."ISR                   = ".join(",", @isr)."\n"
+        ;
+    }
+    $data->{replicas} = \@replicas;
+    $data->{isr} = \@isr;
+    return ($data->{partid}, $data);
+}
+
 # METADATA Response
+
+##
+# Used to decode a metadata response.
+##
+sub metadata_response_ng {
+    my $response = shift;
+
+    my $decoded = {};
+
+    # Unpack the broker metadata
+    my $num_brokers = unpack("x$response->{position} l>", $response->{data});
+    $response->{position} += 4;
+
+    for my $i (1..$num_brokers) {
+        my ($nodeid, $strlen, $host, $port) = unpack("x$response->{position}
+            l>      # NodeId
+            s>X2    # Strlen and go back
+            s>/a    # Host
+            l>      # Port
+            ", $response->{data});
+        $response->{position} += 10 + $strlen;
+        $decoded->{brokers}{$nodeid} = [$host, $port];
+
+        if ( DEBUG ) {
+            print STDERR "Decoded broker information:\n"
+                    ."NODEID        = $nodeid\n"
+                    ."HOST          = $host\n"
+                    ."PORT          = $port\n"
+                    ;
+        }
+    }
+
+    # Unpack the Topic Metadata
+    my $num_topics = unpack("x$response->{position} l>", $response->{data});
+    $response->{position} += 4;
+    for my $i (1..$num_topics) {
+        my ($error_code, $strlen, $topic, $num_partitions) = unpack("x$response->{position}
+            s>      # Topic Error Code
+            s>X2    # Strlen
+            s>/a    # Topic
+            l>      # Number of partitions for this topic
+        ", $response->{data});
+        $response->{position} += 8 + $strlen;
+
+        if (DEBUG) {
+            print STDERR "Decoded Topic:\n"
+                ."NAME              = $topic\n"
+                ."PARTITION COUNT   = $num_partitions\n"
+                ;
+        }
+
+        $decoded->{topics}{$topic} = {
+            error_code => $error_code,
+            num_partitions => $num_partitions
+        };
+
+        # Decode each partition
+        for my $j (1..$num_partitions) {
+            my ($partid, $data) = _partitionmetadata_decode_ng($response);
+            $decoded->{topics}{$topic}{partitions}{$partid} = $data;
+        }
+    }
+    return $decoded;
+}
 
 sub metadata_response {
     my $response = _SCALAR( shift ) or return _error( ERROR_MISMATCH_ARGUMENT );
@@ -742,7 +857,7 @@ sub metadata_response {
                 ;
         }
 
-        $decoded->{topics}{$topic} = { 
+        $decoded->{topics}{$topic} = {
             error_code => $error_code,
             num_partitions => $num_partitions
         };
@@ -780,7 +895,7 @@ sub fetch_response {
         my $topic_count = unpack("x$position l>", $$response);
         $position += 4;
         for my $i (1 .. $topic_count) {
-            my ($strlen, $topic, $partition_count) = 
+            my ($strlen, $topic, $partition_count) =
                 unpack("x$position s>X2 s>/a l>", $$response);
             $position += 6 + $strlen;
 
@@ -835,7 +950,7 @@ sub offsets_response {
         $decoded->{topics} = ();
         my $i = 0;
         for ($i = 0; $i < $decoded->{number_topics}; $i++) {
-            my ($strlen, $topic, $partition_count) 
+            my ($strlen, $topic, $partition_count)
                 = unpack("x$position s>X2 s>/a l>", $$response);
             $position += 6 + $strlen;
 
