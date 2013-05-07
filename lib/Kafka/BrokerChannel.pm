@@ -143,14 +143,19 @@ sub close {
 # TODO: impl, pod
 sub sendSyncRequest {
     my ($self, $brokerId, $apiKey, $dataRef) = @_;
-    confess("sendRequest is not yet implemented");
 
     my $io = $self->{connections}->{$brokerId};
-    if (defined($io)) {
-        return $self->_sendIO($io, $apiKey, $dataRef);
+    if (!defined($io)) {
+        confess("Unable to send request, unknown brokerId.");
     }
-    confess("Unable to send request, unknown brokerId.");
-    return -1;
+    my $correlationId = $self->_getCorrId();
+    my $send_error = $self->_sendIO($io, $apiKey, $correlationId, $dataRef);
+    my $response = $self->_receiveIO($io);
+    if (!defined($response) || $response->{correlationId} != $correlationId) {
+        # Note: Since we are only sending one request at a time this should never happen.
+        confess("[BUG] sendSyncRequest did not receive the proper correlation id.");
+    }
+    return $response;
 }
 
 ##
@@ -228,7 +233,7 @@ sub _refreshMetadata {
     my $self = shift;
     my ($io, @topics) = @_;
     my $data = metadata_request_ng(\@topics);
-    my $correlationId = int(rand(2000000000)); # XXX get a real id
+    my $correlationId = $self->_getCorrId();
     my $error = $self->_sendIO($io, APIKEY_METADATA, $correlationId, $data);
     my $received = $self->_receiveIO($io);
     if ($received->{correlationId} != $correlationId) {
@@ -237,6 +242,36 @@ sub _refreshMetadata {
     my $metadata = metadata_response_ng($received);
     $self->{metadata} = $metadata;
     $self->{metadata}->{refreshed} = time();
+}
+
+##
+# Used to generate a correlation Id. This should be more useful in the future
+# if there are ever more than one request in flight to a server.
+##
+sub _getCorrId {
+    my $self = shift;
+    return int(rand(20000000));
+}
+
+##
+# Used to list known metadata about a specific topic.
+#
+# Expects:
+#   * a topic name
+# Returns:
+#   * a hash: {
+#       partitionId => brokerId,
+#       partitionId => brokerId,
+#   }
+##
+# TODO: impl, test, doc
+sub getTopicMetadata {
+    my ($self, $topic) = @_;
+    my $ret = $self->{metadata}->{topics}->{$topic};
+    if (!defined($ret)) {
+        confess("[BUG] Need to try and reload metadata in getTopicMetadata.");
+    }
+    return $ret->{partitions};
 }
 
 

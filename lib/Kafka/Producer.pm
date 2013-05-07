@@ -10,12 +10,17 @@ our $VERSION = '0.20';
 
 use Carp;
 use Params::Util qw( _INSTANCE _STRING _NONNEGINT _ARRAY0 );
+use Data::Dumper;
 
 use Kafka qw(
     ERROR_MISMATCH_ARGUMENT
     ERROR_CANNOT_SEND
-    );
-use Kafka::Protocol qw( produce_request produce_response );
+);
+use Kafka::Protocol qw( 
+    produce_request_ng
+    produce_response
+    APIKEY_PRODUCE
+);
 use Kafka::BrokerChannel;
 
 our $_last_error;
@@ -29,21 +34,21 @@ sub new {
         # retry count
         # metadata cache
         # metadata object?
-        IO              => undef, # a BrokerChannel
+        BC              => undef, # a BrokerChannel
         RaiseError      => 0,
     };
 
     ## opts:
-    # * IO - pass your own brokerchannel. used for debuging/testing
+    # * BC - pass your own brokerchannel. used for debuging/testing
     # * broker_list - pass a list of brokers to bootstrap from
     # * timeout - 
     # * topics - limit the metadata initialization to a specific set of topics
 
-    if (defined($opts{IO})) {
-        $self->{IO} = $opts{IO};
+    if (defined($opts{BC})) {
+        $self->{BC} = $opts{BC};
     } elsif (defined($opts{broker_list})) {
         print STDERR "broker_list: '$opts{broker_list}'\n";
-        $self->{IO} = Kafka::BrokerChannel->new(
+        $self->{BC} = Kafka::BrokerChannel->new(
             broker_list => $opts{broker_list},
         );
     } else {
@@ -67,7 +72,7 @@ sub new {
     }
     $self->{last_error} = $self->{last_errorcode} = $_last_error = $_last_errorcode = undef;
     # XXX: todo
-    # _INSTANCE( $self->{IO}, 'Kafka::IO' ) or return $self->_error( ERROR_MISMATCH_ARGUMENT );
+    # _INSTANCE( $self->{BC}, 'Kafka::BrokerChannel' ) or return $self->_error( ERROR_MISMATCH_ARGUMENT );
 
     $_last_error        = $_last_errorcode          = undef;
     $self->{last_error} = $self->{last_errorcode}   = undef;
@@ -90,8 +95,12 @@ sub sendKeyedMessages {
     foreach my $brokerId (keys $partitionedData) {
         if ($brokerId == -1) {
             # TODO: do something with the messages we cannot send
+            warn("[BUG] Unable to send some messages and don't know what to do.");
         } else {
-            # TODO: construct and send request to broker
+            my $pack = produce_request_ng($partitionedData->{$brokerId});
+            my $response = $self->{BC}->sendSyncRequest($brokerId, APIKEY_PRODUCE, $pack);
+            # TODO use response
+            warn("[XXX] Response not checked for sending messages.");
         }
     }
 }
@@ -118,13 +127,14 @@ sub partitionAndCollate {
     my ($self, @msgs) = @_;
     my $ret = {};
     foreach my $keyedMsg (@msgs) {
-        my $topic = $keyedMsg->{topic};
-        my $key = $keyedMsg->{key};
+        my @keyedMsg = @$keyedMsg;
+        my $topic = $keyedMsg[0]; #->{topic};
+        my $key = $keyedMsg[1]; #->{key};
         my $topicPartitions = $self->getPartionsForTopic($topic);
         my $partitionIndex = $self->getPartition($key, $topic, $topicPartitions);
         my $brokerId = -1; # Placeholder for invalid brokerId
         if (defined($topicPartitions->{$partitionIndex})) {
-            $brokerId = $topicPartitions->{$partitionIndex};
+            $brokerId = $topicPartitions->{$partitionIndex}->{leader};
         }
         $ret->{$brokerId} = {}
             unless (exists($ret->{$brokerId}));
@@ -132,7 +142,7 @@ sub partitionAndCollate {
             unless (exists($ret->{$brokerId}->{$topic}));
         $ret->{$brokerId}->{$topic}->{$partitionIndex} = [] 
             unless (exists($ret->{$brokerId}->{$topic}->{$partitionIndex}));
-        push(@{$ret->{$brokerId}->{$topic}->{$partitionIndex}}, $keyedMsg->{data});
+        push(@{$ret->{$brokerId}->{$topic}->{$partitionIndex}}, $keyedMsg);
     }
     return $ret;
 }
@@ -165,13 +175,11 @@ sub getPartition {
 #   ...
 # }
 ##
-# TODO: tests, implement
-# mock in some metadata and ensure this creates the proper return
+# TODO: tests
 sub getPartionsForTopic {
     my ($self, $topic) = @_;
-    # TODO: use the metadata!
-    warn("[BUG] getPartitionsForTopic not implemented, continuing");
-    return { 6 => 20, 0 => 1, 1 => 3, 2 => 9 };
+    my $tmetadata = $self->{BC}->getTopicMetadata($topic);
+    return $tmetadata;
 }
 
 sub last_error {
@@ -195,11 +203,27 @@ sub _error {
     $self->{last_errorcode} = $_last_errorcode  = $error_code;
     $self->{last_error}     = $_last_error      = $Kafka::ERROR[$self->{last_errorcode}];
     confess $self->{last_error} if $self->{RaiseError} and $self->{last_errorcode} == ERROR_MISMATCH_ARGUMENT;
-    die $self->{last_error} if $self->{RaiseError} or ( $self->{IO} and ( ref( $self->{IO} eq "Kafka::IO" ) and $self->{IO}->RaiseError ) );
+    die $self->{last_error} if $self->{RaiseError} or ( $self->{BC} and ( ref( $self->{BC} eq "Kafka::BrokerChannel" ) and $self->{BC}->RaiseError ) );
     return;
 }
 
+##
+# Used to send a message to a specific topic.
+# 
+# Expect:
+#  TODO
+# Returns:
+#  TODO
+##
+# TODO: impl, test, doc
+sub sendMsg {
+    my ($self, $topic, $msg) = @_;
+    # TODO XXX fix
+    return $self->sendKeyedMessages([$topic, -1, $msg]);
+}
+
 sub send {
+    confess("[ERROR] send is deprecated. This is probably not what you want.");
     my $self        = shift;
     my $topic       = _STRING( shift ) or return $self->_error( ERROR_MISMATCH_ARGUMENT );
     my $partition   = shift;
@@ -216,13 +240,13 @@ sub send {
     $self->{last_error} = $self->{last_errorcode}   = undef;
     my $sent;
     # TODO XXX We must start to send the messages to the proper broker soon.
-    eval { $sent = $self->{IO}->send( produce_request( $topic, $partition, $messages ) ) };
+    eval { $sent = $self->{BC}->send( produce_request( $topic, $partition, $messages ) ) };
     unless ( defined( $sent ) )
     {
-        if ( $self->{IO}->last_errorcode )
+        if ( $self->{BC}->last_errorcode )
         {
-            $_last_errorcode    = $self->{IO}->last_errorcode;
-            $_last_error        = $self->{IO}->last_error;
+            $_last_errorcode    = $self->{BC}->last_errorcode;
+            $_last_error        = $self->{BC}->last_error;
         }
         else
         {
@@ -231,7 +255,7 @@ sub send {
         }
         $self->{last_errorcode} = $_last_errorcode;
         $self->{last_error}     = $_last_error;
-        die $@ if $self->{RaiseError} or $self->{IO}->RaiseError;
+        die $@ if $self->{RaiseError} or $self->{BC}->RaiseError;
         return;
     }
 
@@ -247,14 +271,15 @@ sub send {
 }
 
 sub _receive {
+
     my $self            = shift;
     my $request_type    = shift;
 
     die("[BUG] Not implemented silly.");
 
     my $response = {};
-    my $message = $self->{IO}->receive( 4 );
-    return $self->_error( $self->{IO}->last_errorcode, $self->{IO}->last_error )
+    my $message = $self->{BC}->receive( 4 );
+    return $self->_error( $self->{BC}->last_errorcode, $self->{IO}->last_error )
         unless ( $message and defined $$message );
     my $tail = $self->{IO}->receive( unpack( "N", $$message ) );
     return $self->_error( $self->{IO}->last_errorcode, $self->{IO}->last_error )
@@ -274,7 +299,7 @@ sub _receive {
 sub close {
     my $self = shift;
 
-    $self->{IO}->close if ref( $self->{IO} ) eq "Kafka::IO";
+    $self->{BC}->close() if ref( $self->{BC} ) eq "Kafka::BrokerChannel";
     delete $self->{$_} foreach keys %$self;
 }
 

@@ -13,16 +13,18 @@ our @EXPORT_OK  = qw(
     REQUESTTYPE_OFFSETS
     metadata_request
     metadata_request_ng
-    request_header_encode
-    produce_request
-    fetch_request
-    offsets_request
     metadata_response
     metadata_response_ng
+    produce_request
+    produce_request_ng
     produce_response
+    fetch_request
+    offsets_request
     fetch_response
     offsets_response
+    request_header_encode
     APIKEY_METADATA
+    APIKEY_PRODUCE
     );
 
 our $VERSION = '0.10';
@@ -234,6 +236,7 @@ sub metadata_request {
 # Returns:
 #   a reference to encoded data
 ##
+# TODO docs
 sub metadata_request_ng {
     my $topics = shift;
 
@@ -262,6 +265,59 @@ sub metadata_request_ng {
 
 
 # PRODUCE Request --------------------------------------------------------------
+
+##
+# Used to pack a bunch of data to send in a produce request to a single broker.
+#
+# Expects:
+#   * a hash of the data to pack: {
+#       topic01 => {
+#           part01 => [[topic01, key, 'data11'], [topic01, key, 'data12']],
+#           part02 => [[topic02, key, 'data21']],
+#           },
+#       topic02 => { ... },
+#    }
+#   * (Optional) a hash of options. TODO list options
+#       - ack_level     XXX not implemented
+#       - timeout       XXX not implemented
+#       - compression   XXX not implemented
+# Returns:
+#   * a reference to the packed data
+##
+# TODO impl, test, doc
+sub produce_request_ng {
+    my ($data, $opts) = @_;
+
+    print STDERR "Data to pack for produce: ".Dumper(\$data);
+
+    # TODO Allow ack level to be set
+    # TODO Allow timeout to be set
+    # TODO Allow compression to be set
+    my $compression = 0;
+    my $packed = pack("
+            s>          # Required Acks
+            l>          # Timeout
+            l>          # Number of topics
+            ", ACK_ALLREPLICAS, DEFAULT_TIMEOUT, scalar(keys $data)
+        );
+    while (my ($topic, $tdata) = each($data)) {
+        print STDERR "Working on topic: '$topic'\n"; # XXX
+        $packed .= pack("
+            s>/a    # Topic
+            l>      # Number of partitions
+            ", $topic, scalar(keys $tdata)
+        );
+        while (my ($partId, $pdata) = each($tdata)) {
+            print STDERR "working part '$partId'\n";
+            $packed .= pack("
+                l>      # Partition id
+                l>/a    # Message set length and data
+                ", $partId, ${_messageset_encode_ng($pdata, { compression => $compression })}
+            );
+        }
+    }
+    return \$packed;
+}
 
 # LIMITATION: For all messages use the same properties:
 #   magic:          Magic Value
@@ -324,6 +380,43 @@ sub produce_request {
 }
 
 # MESSAGE ----------------------------------------------------------------------
+
+##
+# Used to pack an array of messages.
+#
+# Expects:
+#   * an array of messages:
+#       [[topic, key, data], [topic, key, data]]
+#   * (Optional) a hash of options
+#       - compression   TODO XXX Support compression
+# Returns:
+#   a reference to the packed message set
+##
+# TODO support compression
+sub _messageset_encode_ng {
+    my ($messages, $opts) = @_;
+    my $encoded = "";
+    foreach my $msg ( @$messages )
+    {
+        my $encoded_message = pack( "
+                c       # Magic
+                c       # Attributes
+                ", MAGICVALUE_NOCOMPRESSION, COMPRESSION_NO_COMPRESSION
+            )
+            .( $msg->[1] ? pack("l>/a", $msg->[1]) : pack("l>", -1) )
+            .( $msg->[2] ? pack("l>/a", $msg->[2]) : pack("l>", -1) )
+            ;
+        $encoded .= ( BITS64
+                    ? pack( "q>", SENTINEL_OFFSET )
+                    : Kafka::Int64::packq( SENTINEL_OFFSET ) )   # OFFSET
+            .pack("l> L> a* ",
+                4+bytes::length($encoded_message),
+                crc32($encoded_message),
+                $encoded_message
+            );
+    }
+    return \$encoded;
+}
 
 ##
 # Expects an array of messages and returns a wire encoded messageset
