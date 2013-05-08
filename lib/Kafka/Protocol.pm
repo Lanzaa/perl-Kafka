@@ -18,6 +18,7 @@ our @EXPORT_OK  = qw(
     produce_request
     produce_request_ng
     produce_response
+    produce_response_ng
     fetch_request
     offsets_request
     fetch_response
@@ -43,7 +44,7 @@ use Kafka qw(
     ERROR_CHECKSUM_ERROR
     ERROR_COMPRESSED_PAYLOAD
     ERROR_NUMBER_OF_OFFSETS
-    DEFAULT_TIMEOUT
+    DEFAULT_TIMEOUT_MS
     BITS64
     );
 
@@ -91,6 +92,29 @@ our $_last_error;
 our $_last_errorcode;
 
 my $position;
+
+##
+# Used to unpack stuff and automattically put in various.
+#
+# Expects:
+#   * a pack string
+#   * a response hash
+#   * number of bytes to move the response forward
+# Returns:
+#   the unpacked data
+##
+sub unpackRes {
+    my ($pack_string, $response, $bytes) = @_;
+    return unpack("x$response->{position} ".$pack_string, $response->{data});
+}
+
+sub unpackRes64 {
+    my $response = shift;
+    return ( BITS64
+        ? unpack("x$response->{position} q>", $response->{data} )
+        : Kafka::Int64::unpackq(unpack("x$response->{position} a8", $response->{data}))
+    );
+}
 
 sub last_error {
     return $_last_error;
@@ -298,7 +322,7 @@ sub produce_request_ng {
             s>          # Required Acks
             l>          # Timeout
             l>          # Number of topics
-            ", ACK_ALLREPLICAS, DEFAULT_TIMEOUT, scalar(keys $data)
+            ", ACK_ALLREPLICAS, DEFAULT_TIMEOUT_MS, scalar(keys $data)
         );
     while (my ($topic, $tdata) = each($data)) {
         print STDERR "Working on topic: '$topic'\n"; # XXX
@@ -345,7 +369,7 @@ sub produce_request {
     my $encoded = pack("
             s>          # Required Acks
             l>          # Timeout
-            ", ACK_ALLREPLICAS, DEFAULT_TIMEOUT,
+            ", ACK_ALLREPLICAS, DEFAULT_TIMEOUT_MS,
         );
 
     # TODO Allow multiple topics and partitions
@@ -403,8 +427,8 @@ sub _messageset_encode_ng {
                 c       # Attributes
                 ", MAGICVALUE_NOCOMPRESSION, COMPRESSION_NO_COMPRESSION
             )
-            .( $msg->[1] ? pack("l>/a", $msg->[1]) : pack("l>", -1) )
-            .( $msg->[2] ? pack("l>/a", $msg->[2]) : pack("l>", -1) )
+            .( defined($msg->[1]) ? pack("l>/a", $msg->[1]) : pack("l>", -1) ) # Pack the key
+            .( defined($msg->[2]) ? pack("l>/a", $msg->[2]) : pack("l>", -1) ) # Pack the value
             ;
         $encoded .= ( BITS64
                     ? pack( "q>", SENTINEL_OFFSET )
@@ -797,21 +821,17 @@ sub _partitionmetadata_decode_ng {
         $data->{error_code},
         $data->{partid},
         $data->{leader},
-    ) = unpack("x$response->{position}
+    ) = unpackRes("
         s>          # Partition Error Code
         l>          # Partition ID
         l>          # Leader NodeID
-        ", $response->{data});
+        ", $response);
     $response->{position} += 10;
 
-    my @replicas = unpack("x$response->{position}
-        l>/(l>)     # Replicas
-        ", $response->{data});
+    my @replicas = unpackRes("l>/(l>)", $response);
     $response->{position} += 4 + 4*scalar(@replicas);
 
-    my @isr = unpack("x$response->{position}
-        l>/(l>)     # Insync Replicas
-        ", $response->{data});
+    my @isr = unpackRes("l>/(l>)", $response);
     $response->{position} += 4 + 4*scalar(@isr);
 
     if (DEBUG) {
@@ -841,16 +861,16 @@ sub metadata_response_ng {
     my $decoded = {};
 
     # Unpack the broker metadata
-    my $num_brokers = unpack("x$response->{position} l>", $response->{data});
+    my $num_brokers = unpackRes("l>", $response);
     $response->{position} += 4;
 
     for my $i (1..$num_brokers) {
-        my ($nodeid, $strlen, $host, $port) = unpack("x$response->{position}
+        my ($nodeid, $strlen, $host, $port) = unpackRes("
             l>      # NodeId
             s>X2    # Strlen and go back
             s>/a    # Host
             l>      # Port
-            ", $response->{data});
+            ", $response);
         $response->{position} += 10 + $strlen;
         $decoded->{brokers}{$nodeid} = [$host, $port];
 
@@ -864,15 +884,15 @@ sub metadata_response_ng {
     }
 
     # Unpack the Topic Metadata
-    my $num_topics = unpack("x$response->{position} l>", $response->{data});
+    my $num_topics = unpackRes("l>", $response);
     $response->{position} += 4;
     for my $i (1..$num_topics) {
-        my ($error_code, $strlen, $topic, $num_partitions) = unpack("x$response->{position}
+        my ($error_code, $strlen, $topic, $num_partitions) = unpackRes("
             s>      # Topic Error Code
             s>X2    # Strlen
             s>/a    # Topic
             l>      # Number of partitions for this topic
-        ", $response->{data});
+        ", $response);
         $response->{position} += 8 + $strlen;
 
         if (DEBUG) {
@@ -926,7 +946,7 @@ sub metadata_response {
                     ."PORT          = $port\n"
                     ;
         }
-        
+
         $decoded->{brokers}{$nodeid} = [$host, $port];
     }
 
@@ -965,6 +985,35 @@ sub metadata_response {
 }
 
 # PRODUCE Response
+
+##
+# Used to decode the response to a produce request.
+##
+sub produce_response_ng {
+    my $response = shift;
+    my $ret = {};
+
+    my $num_topics = unpackRes("l>", $response);
+    $response->{position} += 4;
+    foreach my $i (1..$num_topics) {
+        my ($strlen, $topic, $num_partitions) = unpackRes("s>X2 s>/a l>", $response);
+        $response->{position} += 2 + 4 + $strlen;
+        $ret->{$topic} = {};
+
+        foreach my $j (1..$num_partitions) {
+            my ($partition, $error_code) = unpackRes("l> s>", $response);
+            $response->{position} += 4 + 2;
+            my $offset = unpackRes64($response); # 64 bit offset
+            $response->{position} += 8;
+
+            $ret->{$topic}->{$partition} = {
+                error_code => $error_code,
+                offset => $offset,
+            };
+        }
+    }
+    return $ret;
+}
 
 sub produce_response {
     die("[BUG] Not implemented silly one.");

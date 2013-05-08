@@ -16,9 +16,9 @@ use Kafka qw(
     ERROR_MISMATCH_ARGUMENT
     ERROR_CANNOT_SEND
 );
-use Kafka::Protocol qw( 
+use Kafka::Protocol qw(
     produce_request_ng
-    produce_response
+    produce_response_ng
     APIKEY_PRODUCE
 );
 use Kafka::BrokerChannel;
@@ -41,7 +41,7 @@ sub new {
     ## opts:
     # * BC - pass your own brokerchannel. used for debuging/testing
     # * broker_list - pass a list of brokers to bootstrap from
-    # * timeout - 
+    # * timeout -
     # * topics - limit the metadata initialization to a specific set of topics
 
     if (defined($opts{BC})) {
@@ -100,6 +100,8 @@ sub sendKeyedMessages {
             my $pack = produce_request_ng($partitionedData->{$brokerId});
             my $response = $self->{BC}->sendSyncRequest($brokerId, APIKEY_PRODUCE, $pack);
             # TODO use response
+            my $t = produce_response_ng($response);
+            print STDERR "t: ".Dumper(\$t);
             warn("[XXX] Response not checked for sending messages.");
         }
     }
@@ -110,12 +112,12 @@ sub sendKeyedMessages {
 # keyed message = (topic, key, data) # XXX really?
 #
 # Expects an array of keyed messages
-# Returns a hash of 
+# Returns a hash of
 # {
-#   brokerId => { 
-#       topic => { 
+#   brokerId => {
+#       topic => {
 #           partition => [messages],
-#           partition => [messages], 
+#           partition => [messages],
 #       },
 #       topic => { ... },
 #   },
@@ -140,7 +142,7 @@ sub partitionAndCollate {
             unless (exists($ret->{$brokerId}));
         $ret->{$brokerId}->{$topic} = {}
             unless (exists($ret->{$brokerId}->{$topic}));
-        $ret->{$brokerId}->{$topic}->{$partitionIndex} = [] 
+        $ret->{$brokerId}->{$topic}->{$partitionIndex} = []
             unless (exists($ret->{$brokerId}->{$topic}->{$partitionIndex}));
         push(@{$ret->{$brokerId}->{$topic}->{$partitionIndex}}, $keyedMsg);
     }
@@ -153,15 +155,16 @@ sub partitionAndCollate {
 # Expects a key, a topic, and a hash from the function getPartionsForTopic.
 # Returns the partitionId for the key
 ##
-# TODO: 
+# TODO:
 # * add ability for users of this library to plug in their own partitioner
 # ** let them set an object or something
 sub getPartition {
     my ($self, $key, $topic, $partitions) = @_;
     # XXX: Just doing the dumb, modulo key. should fix
+    my $pk = $self->{_rr}++ || 0;
     my @partitionIds = keys %$partitions;
-    my $partitionCount = @partitionIds;
-    return $partitionIds[$key%$partitionCount];
+    my $partitionCount = scalar(@partitionIds);
+    return $partitionIds[$pk%$partitionCount];
 }
 
 ##
@@ -209,7 +212,7 @@ sub _error {
 
 ##
 # Used to send a message to a specific topic.
-# 
+#
 # Expect:
 #  TODO
 # Returns:

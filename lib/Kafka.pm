@@ -11,6 +11,7 @@ use Exporter qw( import );
 our @EXPORT_OK  = qw(
     KAFKA_SERVER_PORT
     DEFAULT_TIMEOUT
+    DEFAULT_TIMEOUT_MS
     TIMESTAMP_LATEST
     TIMESTAMP_EARLIEST
     DEFAULT_MAX_SIZE
@@ -44,6 +45,7 @@ use constant {
     KAFKA_SERVER_PORT                   => 9092,
 
     DEFAULT_TIMEOUT                     => 0.5,         # The timeout in secs, for gethostbyname, connect, blocking receive and send calls (could be any integer or floating-point type)
+    DEFAULT_TIMEOUT_MS                     => 500,         # timeout in milliseconds
 
     TIMESTAMP_LATEST                    => -1,
     TIMESTAMP_EARLIEST                  => -2,

@@ -12,7 +12,7 @@ use Params::Util qw( _STRING );
 use Kafka qw(
     DEFAULT_TIMEOUT
     );
-use Kafka::Protocol qw( 
+use Kafka::Protocol qw(
     APIKEY_METADATA
     metadata_request_ng
     metadata_response_ng
@@ -20,9 +20,10 @@ use Kafka::Protocol qw(
     );
 use Kafka::IO;
 
-our $DEBUG = 1;
+use constant DEBUG => 1;
+use constant DEBUG_IO => 1; # XXX Used for dumping the bytes that are being sent over the wire.
 
-BEGIN { if($DEBUG) { use Data::Dumper; } }
+BEGIN { if(DEBUG) { use Data::Dumper; } }
 
 ##
 #
@@ -149,6 +150,9 @@ sub sendSyncRequest {
         confess("Unable to send request, unknown brokerId.");
     }
     my $correlationId = $self->_getCorrId();
+    if (DEBUG) {
+        print STDERR "Writing to broker with id '$brokerId'\n";
+    }
     my $send_error = $self->_sendIO($io, $apiKey, $correlationId, $dataRef);
     my $response = $self->_receiveIO($io);
     if (!defined($response) || $response->{correlationId} != $correlationId) {
@@ -160,7 +164,7 @@ sub sendSyncRequest {
 
 ##
 # Used to send a request over a specific IO connection.
-# 
+#
 # Expects:
 #   * Kafka::IO
 #   * a ref to the packed request
@@ -178,6 +182,9 @@ sub _sendIO {
         $correlationId,
     ).$$dataRef;
 
+    if (DEBUG_IO) {
+        print STDERR "Sending data: '".unpack("H*", $encoded)."'\n";
+    }
     my $error = $io->send($encoded);
     return $error;
 }
@@ -197,6 +204,9 @@ sub _receiveIO {
     my $message = $io->receive(unpack("N", $$packedSize));
     unless($message and defined($$message)) {
         confess("Something died in receiveIO");
+    }
+    if (DEBUG_IO) {
+        print STDERR "Incoming data: '".unpack("H*", $$packedSize).unpack("H*", $$message)."'\n";
     }
     my $data = {
         correlationId => unpack("N", $$message),
