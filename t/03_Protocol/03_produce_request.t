@@ -38,7 +38,7 @@ my $request_single =                            # PRODUCE Request - "no compress
     .'7065726c2d6b61666b61'     # CLIENT ID (perl-kafka)
     # Produce Request
     .'ffff'                 # Required ACKS
-    .'00000000'     # TIMEOUT
+    .'000003e8'     # TIMEOUT
     .'00000001'     # Number of topics
     .'0004'     # Topic length
     .'74657374'     # Topic (test)
@@ -73,7 +73,7 @@ my $request_series =                            # PRODUCE Request - "no compress
     .'7065726c2d6b61666b61'     # CLIENT ID (perl-kafka)
     # Produce Request
     .'ffff'                 # Required ACKS
-    .'00000000'     # TIMEOUT
+    .'000003e8'     # TIMEOUT
     .'00000001'     # Number of topics
     .'0004'     # Topic length
     .'74657374'     # Topic (test)

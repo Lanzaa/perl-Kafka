@@ -8,19 +8,11 @@ use warnings;
 
 use lib 'lib';
 
-use Test::More tests => 9;
+use Test::More tests => 7;
 
 # PRECONDITIONS ----------------------------------------------------------------
 
 use Kafka::Mock;
-use Kafka::IO;
-
-# -- verification of the IO objects creation
-my $server = Kafka::Mock->new(
-    requests    => {},
-    responses   => {},
-    );
-isa_ok( $server, 'Kafka::Mock' );
 
 # INSTRUCTIONS -----------------------------------------------------------------
 
@@ -28,7 +20,7 @@ isa_ok( $server, 'Kafka::Mock' );
 BEGIN { use_ok 'Kafka::Producer' }
 
 my $producer = Kafka::Producer->new(
-    broker_list => "localhost:$server->port",
+    BC => '', # Debug only
     );
 unless ( $producer )
 {
@@ -45,4 +37,3 @@ can_ok( $producer, $_ ) for qw( new last_error last_errorcode send close );
 
 # -- Closes and cleans up
 $producer->close;
-$server->close;

@@ -1,6 +1,9 @@
 
 Trying to bring everything up to 0.8 protocol
 
+Known Issues:
+    * Producer - If there is a partition that does not have a leader, sending messages will fail.
+
 TODO: (Unimplemented)
     Offset Commit/Fetch API
         Offset Commit Request

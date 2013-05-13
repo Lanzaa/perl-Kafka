@@ -1,5 +1,10 @@
 Revision history for Kafka package
 
+0.21  Mon May  13 2013
+    CHANGES:
+    - Initial support for a producer and multiple brokers
+    - Addition of BrokerChannels to manage connections to brokers.
+
 0.20  Mon Feb  25 2013
     CHANGES:
     - Initial prototype support for Kafka 0.8 protocol

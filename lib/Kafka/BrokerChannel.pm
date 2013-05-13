@@ -14,14 +14,15 @@ use Kafka qw(
     );
 use Kafka::Protocol qw(
     APIKEY_METADATA
+    CLIENT_ID
     metadata_request_ng
     metadata_response_ng
     request_header_encode
     );
 use Kafka::IO;
 
-use constant DEBUG => 1;
-use constant DEBUG_IO => 1; # XXX Used for dumping the bytes that are being sent over the wire.
+use constant DEBUG => 0;
+use constant DEBUG_IO => 0; # XXX Used for dumping the bytes that are being sent over the wire.
 
 BEGIN { if(DEBUG) { use Data::Dumper; } }
 
@@ -82,7 +83,8 @@ sub _init {
         $io = Kafka::IO->new(
             host => $host,
             port => $port,
-            timeout => $self->{timeout}, # XXX: do we need a timeout here?
+            timeout => $self->{timeout}, # XXX proper timeout
+            RaiseError => 1,
         );
         if (defined($io)) {
             last; # We have a connection, get out of here
@@ -107,6 +109,7 @@ sub _init {
             host => $host,
             port => $port,
             timeout => $self->{timeout},
+            RaiseError => 1,
         );
         if (defined($io)) {
             $self->{connections}->{$brokerId} = $broker_io;
@@ -178,7 +181,7 @@ sub _sendIO {
     my $encoded = request_header_encode(
         bytes::length( $$dataRef ),
         $apiKey,
-        $self->{clientId} || "CLIENTIDFORKAFKAPERL", # XXX create a client id
+        $self->{clientId} || CLIENT_ID,
         $correlationId,
     ).$$dataRef;
 
@@ -201,6 +204,9 @@ sub _receiveIO {
     my $self = shift;
     my $io = shift;
     my $packedSize = $io->receive(4); # Get the size
+    if (!defined($packedSize)) {
+        confess("[BUG] something died in receiveIO");
+    }
     my $message = $io->receive(unpack("N", $$packedSize));
     unless($message and defined($$message)) {
         confess("Something died in receiveIO");

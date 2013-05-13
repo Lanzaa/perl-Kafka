@@ -54,11 +54,11 @@ print "Topics found:\n";
 foreach my $topic (@topics) {
     print "* '$topic'\n";
     if ($debug) {
+        # Print detailed information about each topic.
         my $topic_metadata = $channel->getTopicMetadata($topic);
         my @partitions = keys $topic_metadata;
         foreach my $partition (sort @partitions) {
             my $data = $topic_metadata->{$partition};
-            #while (my ($partition, $data) = each($topic_metadata)) {
             printf("\tpartition: %d\tleader: %d\tisr: %s\treplicas: %s\terror: %d\n",
                 $partition,
                 $data->{leader},
@@ -67,7 +67,6 @@ foreach my $topic (@topics) {
                 $data->{error_code}
             );
         }
-
     }
 }
 

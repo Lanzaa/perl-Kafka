@@ -5,7 +5,7 @@ use strict;
 use warnings;
 use sigtrap;
 
-our $VERSION = '0.20';
+our $VERSION = '0.21';
 
 use bytes;
 use Carp;
@@ -311,7 +311,6 @@ sub request_metadata {
 sub _receive_metadata {
     my $self = shift;
 
-    my $response = {};
     my $message = $self->receive( 4 );
     # TODO return error { unless( $message and defined $$message ) }
     my $tail = $self->receive( unpack( "N", $$message) );
@@ -320,11 +319,6 @@ sub _receive_metadata {
     $$message .= $$tail;
 
     my $decoded = metadata_response( $message );
-#    unless ( $response->{error_code} = $decoded->{header}->{error_code} )
-#    {
-#        $response->{messages} = [] unless defined $response->{messages};
-#        push @{$response->{messages}}, @{$decoded->{messages}};
-#    }
 
     return $decoded;
 }
@@ -346,7 +340,7 @@ server without using the Apache ZooKeeper
 
 =head1 VERSION
 
-This documentation refers to C<Kafka::IO> version 0.20
+This documentation refers to C<Kafka::IO> version 0.21
 
 =head1 SYNOPSIS
 

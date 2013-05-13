@@ -37,7 +37,7 @@ our @EXPORT_OK  = qw(
 #    ERRORCODE_UNKNOWN
 #    ERRORCODE_WRONG_PARTITION_CODE
 
-our $VERSION = '0.20';
+our $VERSION = '0.21';
 
 use Config;
 
@@ -45,7 +45,7 @@ use constant {
     KAFKA_SERVER_PORT                   => 9092,
 
     DEFAULT_TIMEOUT                     => 0.5,         # The timeout in secs, for gethostbyname, connect, blocking receive and send calls (could be any integer or floating-point type)
-    DEFAULT_TIMEOUT_MS                     => 500,         # timeout in milliseconds
+    DEFAULT_TIMEOUT_MS                     => 1000,         # timeout in milliseconds
 
     TIMESTAMP_LATEST                    => -1,
     TIMESTAMP_EARLIEST                  => -2,
@@ -102,44 +102,14 @@ Kafka - constants and messages used by the Kafka package modules
 
 =head1 VERSION
 
-This documentation refers to C<Kafka> package version 0.10
+This documentation refers to C<Kafka> package version 0.21
 
 =head1 SYNOPSIS
-
-An example of C<Kafka> usage:
-
-    use Kafka qw(
-        BITS64
-        KAFKA_SERVER_PORT
-        DEFAULT_TIMEOUT
-        TIMESTAMP_EARLIEST
-        DEFAULT_MAX_OFFSETS
-        DEFAULT_MAX_SIZE
-        );
-    
-    # common information
-    print "This is Kafka package $Kafka::VERSION\n";
-    print "You have a ", BITS64 ? "64" : "32", " bit system\n";
-    
-    use Kafka::IO;
-    
-    # connect to local server with the defaults
-    my $io = Kafka::IO->new( host => "localhost" );
-    
-    # decoding of the error code
-    unless ( $io )
-    {
-        print STDERR "last error: ",
-            $Kafka::ERROR[Kafka::IO::last_errorcode], "\n";
-    }
-
-To see a brief but working code example of the C<Kafka> package usage
-look at the L</"An Example"> section.
 
 =head1 ABSTRACT
 
 The Kafka package is a set of Perl modules which provides a simple and
-consistent application programming interface (API) to Apache Kafka 0.7,
+consistent application programming interface (API) to Apache Kafka 0.8,
 a high-throughput distributed messaging system.
 This is a low-level API implementation which DOES NOT interract with 
 an Apache ZooKeeper for consumer coordination and/or load balancing.
@@ -192,7 +162,7 @@ on 32 bit systems.
 
 =head1 APACHE KAFKA'S STYLE COMMUNICATION
 
-The Kafka package is based on Kafka's 0.7 Wire Format specification document at
+The Kafka package is based on Kafka's 0.8 Wire Format specification document at
 L<http://cwiki.apache.org/confluence/display/KAFKA/Wire+Format/>
 
 =over 3
@@ -273,413 +243,17 @@ the IO object disconnects and creates an internal exception.
 
 =head2 The Producer Object
 
-Kafka producer API is implemented by L<Kafka::Producer|Kafka::Producer> class.
-
-    use Kafka::Producer;
-    
-    #-- Producer
-    my $producer = Kafka::Producer->new( IO => $io );
-    
-    # Sending a single message
-    $producer->send(
-        "test",             # topic
-        0,                  # partition
-        "Single message"    # message
-        );
-    
-    # Sending a series of messages
-    $producer->send(
-        "test",             # topic
-        0,                  # partition
-        [                   # messages
-            "The first message",
-            "The second message",
-            "The third message",
-        ]
-        );
-
-The main attributes of the producer request are:
-
-=over 3
-
-=item *
-
-The request method of the producer object is C<send()>.
-
-=item *
-
-B<topic> and B<partition> encode parameters of the B<messages> we
-want to send.
-
-=item *
-
-B<messages> is an arbitrary amount of data (a simple data string or
-an array of the data strings).
-
-=back
-
 =head2 The Consumer Object
-
-Kafka consumer API is implemented by L<Kafka::Consumer|Kafka::Consumer> class.
-
-    use Kafka::Consumer;
-    
-    $consumer = Kafka::Consumer->new( IO => $io );
-
-The request methods of the consumer object are C<offsets()> and C<fetch()>.
-
-C<offsets> method returns a reference to the list of offsets of received messages.
-
-C<fetch> method returns a reference to the list of received
-L<Kafka::Message|Kafka::Message> objects.
-
-    # Get a list of valid offsets up to max_number before the given time
-    if ( my $offsets = $consumer->offsets(
-        "test",             # topic
-        0,                  # partition
-        TIMESTAMP_EARLIEST, # time
-        DEFAULT_MAX_OFFSETS # max_number
-        ) )
-    {
-        foreach my $offset ( @$offsets )
-        {
-            print "Received offset: $offset\n";
-        }
-    }
-    
-    # Consuming messages
-    if ( my $messages = $consumer->fetch(
-        "test",             # topic
-        0,                  # partition
-        0,                  # offset
-        DEFAULT_MAX_SIZE    # max_size
-        ) )
-    {
-        foreach my $message ( @$messages )
-        {
-            if( $message->valid )
-            {
-                print "payload    : ", $message->payload,       "\n";
-                print "offset     : ", $message->offset,        "\n";
-                print "next_offset: ", $message->next_offset,   "\n";
-            }
-        }
-    }
-
-The arguments:
-
-=over 3
-
-=item *
-
-B<topic> and B<partition> specify the location of the B<messages> we want to retrieve.
-
-=item *
-
-B<offset>, B<max_size> or B<time>, B<max_number> arguments are additional
-information that specify attributes of the messages we want to access.
-
-=item *
-
-B<time> is the timestamp of the offsets before this time (ms). B<max_number>
-is the maximum number of offsets to retrieve. This additional information
-about the request must be used to describe the range of the B<messages>.
-
-=back
 
 =head2 The Message Object
 
-Kafka message API is implemented by L<Kafka::Message|Kafka::Message> class.
-
-    if( $message->valid )
-    {
-        print "payload    : ", $message->payload,       "\n";
-        print "offset     : ", $message->offset,        "\n";
-        print "next_offset: ", $message->next_offset,   "\n";
-    }
-    else
-    {
-        print "error      : ", $message->error,         "\n";
-    }
-
-Available methods of L<Kafka::Message|Kafka::Message> object are:
-
-=over 3
-
-=item *
-
-C<payload> A simple message received from the Apache Kafka server.
-
-=item *
-
-C<valid> A message entry is valid if the CRC32 of the message payload matches
-to the CRC stored with the message. 
-
-=item *
-
-C<error> A description of the message inconsistence (currently only for message
-is not valid or compressed).
-
-=item *
-
-C<offset> The offset beginning of the message in the Apache Kafka server.
-
-=item *
-
-C<next_offset> The offset beginning of the next message in the Apache Kafka
-server.
-
-=back
-
 =head2 Common
-
-Both Kafka::Producer and Kafka::Consumer objects described above also have 
-the following common methods:
-
-=over 3
-
-=item *
-
-C<RaiseError> is a method which causes Kafka to die if an error is detected.
-
-=item *
-
-C<last_errorcode> and C<last_error> diagnostic methods. Use them to get detailed 
-error message if server or the resource might not be available, access to the 
-resource might be denied, or other things might have failed for some reason.
-
-=item *
-
-C<close> method: terminates connection with Kafka and clean up.
-
-    my $producer = Kafka::Producer->new(
-        IO          => $io,
-        RaiseError  => 1
-        );
-    
-    unless ( $producer->send( "test", 0, "Single message" )
-    {
-        print
-            "error code       : ", $producer->last_errorcode,   "\n",
-            "error description: ", $producer->last_error,       "\n";
-    }
-    
-    $producer->close;
-
-=back
 
 =head2 EXPORT
 
-None by default.
-
-Additional constants are available for import, which can be used
-to define some type of parameters, and to identify various error cases.
-
-These are the defaults:
-
-=over
-
-=item C<KAFKA_SERVER_PORT>
-
-default Apache Kafka server port - 9092.
-
-=item C<DEFAULT_TIMEOUT>
-
-timeout in secs, for C<gethostbyname>, C<connect>, blocking C<receive> and
-C<send> calls (could be any integer or floating-point type) - 0.5 sec.
-
-=item C<TIMESTAMP_LATEST>
-
-timestamp of the offsets before this time (ms) special value -1 : latest
-
-=item C<TIMESTAMP_EARLIEST>
-
-timestamp of the offsets before this time (ms) special value -2 : earliest
-
-=item C<DEFAULT_MAX_SIZE>
-
-maximum size of message(s) to receive - 1MB
-
-=item C<DEFAULT_MAX_OFFSETS>
-
-maximum number of offsets to retrieve - 100
-
-=item C<MAX_SOCKET_REQUEST_BYTES>
-
-The maximum size of a request that the socket server will accept
-(protection against OOM). Default limit (as configured in server.properties)
-is 104857600
-
-=back
-
-Possible error codes returned by C<last_errorcode> method
-(complies with an array of descriptions C<@Kafka::ERROR>):
-
-=over
-
-=item C<ERROR_INVALID_MESSAGE_CODE>
-
-0 - Invalid message
-
-=item C<ERROR_MISMATCH_ARGUMENT>
-
-1 - Mismatch argument
-
-=item C<ERROR_WRONG_CONNECT>
-
-2 - You must configure a host to connect to!
-
-=item C<ERROR_CANNOT_SEND>
-
-3 - Can't send
-
-=item C<ERROR_CANNOT_RECV>
-
-4 - Can't receive
-
-=item C<ERROR_CANNOT_BIND>
-
-5 - Can't bind
-
-=item C<ERROR_CHECKSUM_ERROR>
-
-6 - Checksum error
-
-=item C<ERROR_COMPRESSED_PAYLOAD>
-
-7 - Compressed payload
-
-=item C<ERROR_NUMBER_OF_OFFSETS>
-
-7 - Amount received offsets does not match 'NUMBER of OFFSETS'
-
-=item C<ERROR_NOTHING_RECEIVE>
-
-8 - Nothing to receive
-
-=item C<ERROR_IN_ERRORCODE>
-
-9 - Response contains an error in 'ERROR_CODE'
-
-=back
-
-Support for working with 64 bit elements of the Kafka Wire Format protocol
-on 32 bit systems:
-
-=over
-
-=item C<BITS64>
-
-Know you are working on 64 or 32 bit system
-
-=back
-
 =head2 GLOBAL VARIABLES
 
-=over
-
-=item C<@Kafka::ERROR>
-
-Contain the descriptions for possible error codes returned by
-C<last_errorcode> methods and functions of the package modules.
-
-=item C<%Kafka::ERROR_CODE>
-
-Contain the descriptions for possible error codes in the ERROR_CODE box of
-Apache Kafka Wire Format protocol responses.
-
-=back
-
 =head2 An Example
-
-    use Kafka qw(
-        KAFKA_SERVER_PORT
-        DEFAULT_TIMEOUT
-        TIMESTAMP_EARLIEST
-        DEFAULT_MAX_OFFSETS
-        DEFAULT_MAX_SIZE
-        );
-    use Kafka::IO;
-    use Kafka::Producer;
-    use Kafka::Consumer;
-    
-    #-- IO
-    my $io = Kafka::IO->new( host => "localhost" );
-    
-    #-- Producer
-    my $producer = Kafka::Producer->new( IO => $io );
-    
-    # Sending a single message
-    $producer->send(
-        "test",             # topic
-        0,                  # partition
-        "Single message"    # message
-        );
-    
-    # Sending a series of messages
-    $producer->send(
-        "test",             # topic
-        0,                  # partition
-        [                   # messages
-            "The first message",
-            "The second message",
-            "The third message",
-        ]
-        );
-    
-    $producer->close;
-    
-    #-- Consumer
-    my $consumer = Kafka::Consumer->new( IO => $io );
-    
-    # Get a list of valid offsets up max_number before the given time
-    my $offsets;
-    if ( $offsets = $consumer->offsets(
-        "test",             # topic
-        0,                  # partition
-        TIMESTAMP_EARLIEST, # time
-        DEFAULT_MAX_OFFSETS # max_number
-        ) )
-    {
-        foreach my $offset ( @$offsets )
-        {
-            print "Received offset: $offset\n";
-        }
-    }
-    if ( !$offsets or $consumer->last_error )
-    {
-        print
-            "(", $consumer->last_errorcode, ") ",
-            $consumer->last_error, "\n";
-    }
-    
-    # Consuming messages
-    if ( my $messages = $consumer->fetch(
-        "test",             # topic
-        0,                  # partition
-        0,                  # offset
-        DEFAULT_MAX_SIZE    # Maximum size of MESSAGE(s) to receive
-        ) )
-    {
-        foreach my $message ( @$messages )
-        {
-            if( $message->valid )
-            {
-                print "payload    : ", $message->payload,       "\n";
-                print "offset     : ", $message->offset,        "\n";
-                print "next_offset: ", $message->next_offset,   "\n";
-            }
-            else
-            {
-                print "error      : ", $message->error,         "\n";
-            }
-        }
-    }
-    
-    $consumer->close;
-
-C<$io>, C<$producer>, and C<$consumer> are created once when the
-application starts up.
 
 =head1 DEPENDENCIES
 

@@ -6,7 +6,7 @@ use warnings;
 
 # Basic functionalities to include a simple Producer
 
-our $VERSION = '0.20';
+our $VERSION = '0.21';
 
 use Carp;
 use Params::Util qw( _INSTANCE _STRING _NONNEGINT _ARRAY0 );
@@ -82,7 +82,7 @@ sub new {
 
 ##
 # Expects an array of keyed messages
-# keyed message = (topic, key, data) # XXX really?
+# keyed message = (topic, key, data)
 ##
 # TODO: test cases, impl
 # test with single keyed message
@@ -98,18 +98,26 @@ sub sendKeyedMessages {
             warn("[BUG] Unable to send some messages and don't know what to do.");
         } else {
             my $pack = produce_request_ng($partitionedData->{$brokerId});
-            my $response = $self->{BC}->sendSyncRequest($brokerId, APIKEY_PRODUCE, $pack);
+            my $data = $self->{BC}->sendSyncRequest($brokerId, APIKEY_PRODUCE, $pack);
             # TODO use response
-            my $t = produce_response_ng($response);
-            print STDERR "t: ".Dumper(\$t);
-            warn("[XXX] Response not checked for sending messages.");
+            my $response = produce_response_ng($data);
+            foreach my $topic (keys $response) {
+                foreach my $partition (keys $response->{$topic}) {
+                    my $partition_data = $response->{$topic}->{$partition};
+                    my $error_code = $partition_data->{error_code};
+                    if ($error_code != 0) {
+                        # TODO handle errors
+                        confess("[BUG] Unable to handle error code: '$error_code'");
+                    }
+                }
+            }
         }
     }
 }
 
 ##
 # Used to group messages together to send as a group to each broker.
-# keyed message = (topic, key, data) # XXX really?
+# keyed message = (topic, key, data)
 #
 # Expects an array of keyed messages
 # Returns a hash of
@@ -213,64 +221,21 @@ sub _error {
 ##
 # Used to send a message to a specific topic.
 #
-# Expect:
-#  TODO
+# Expects:
+#   * a topic name
+#   * data to be sent
+#
 # Returns:
 #  TODO
 ##
-# TODO: impl, test, doc
+# TODO: test, doc
 sub sendMsg {
     my ($self, $topic, $msg) = @_;
-    # TODO XXX fix
     return $self->sendKeyedMessages([$topic, -1, $msg]);
 }
 
 sub send {
     confess("[ERROR] send is deprecated. This is probably not what you want.");
-    my $self        = shift;
-    my $topic       = _STRING( shift ) or return $self->_error( ERROR_MISMATCH_ARGUMENT );
-    my $partition   = shift;
-    my $messages    = shift;
-
-    return $self->_error( ERROR_MISMATCH_ARGUMENT ) unless defined( _NONNEGINT( $partition ) );
-
-    (
-        _STRING( $messages ) or
-        _ARRAY0( $messages )
-    ) or return $self->_error( ERROR_MISMATCH_ARGUMENT );
-
-    $_last_error        = $_last_errorcode          = undef;
-    $self->{last_error} = $self->{last_errorcode}   = undef;
-    my $sent;
-    # TODO XXX We must start to send the messages to the proper broker soon.
-    eval { $sent = $self->{BC}->send( produce_request( $topic, $partition, $messages ) ) };
-    unless ( defined( $sent ) )
-    {
-        if ( $self->{BC}->last_errorcode )
-        {
-            $_last_errorcode    = $self->{BC}->last_errorcode;
-            $_last_error        = $self->{BC}->last_error;
-        }
-        else
-        {
-            $_last_errorcode    = Kafka::Protocol::last_errorcode;
-            $_last_error        = Kafka::Protocol::last_error;
-        }
-        $self->{last_errorcode} = $_last_errorcode;
-        $self->{last_error}     = $_last_error;
-        die $@ if $self->{RaiseError} or $self->{BC}->RaiseError;
-        return;
-    }
-
-    my $decoded = {};
-    eval { $decoded = $self->_receive( ) };
-    return $self->_error( $self->{last_errorcode}, $self->{last_error} )
-        if ($self->{last_error});
-
-    # TODO Handle error codes from partitions
-    # An error code will tell us to send to a different broker
-
-    return 1;
 }
 
 sub _receive {
@@ -322,7 +287,7 @@ Kafka::Producer - object interface to the producer client
 
 =head1 VERSION
 
-This documentation refers to C<Kafka::Producer> version 0.20
+This documentation refers to C<Kafka::Producer> version 0.21
 
 =head1 SYNOPSIS
 

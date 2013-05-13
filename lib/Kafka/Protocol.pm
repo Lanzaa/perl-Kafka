@@ -26,9 +26,10 @@ our @EXPORT_OK  = qw(
     request_header_encode
     APIKEY_METADATA
     APIKEY_PRODUCE
+    CLIENT_ID
     );
 
-our $VERSION = '0.10';
+our $VERSION = '0.21';
 
 use bytes;
 use Carp;
@@ -104,7 +105,7 @@ my $position;
 #   the unpacked data
 ##
 sub unpackRes {
-    my ($pack_string, $response, $bytes) = @_;
+    my ($pack_string, $response) = @_;
     return unpack("x$response->{position} ".$pack_string, $response->{data});
 }
 
@@ -312,8 +313,6 @@ sub metadata_request_ng {
 sub produce_request_ng {
     my ($data, $opts) = @_;
 
-    print STDERR "Data to pack for produce: ".Dumper(\$data);
-
     # TODO Allow ack level to be set
     # TODO Allow timeout to be set
     # TODO Allow compression to be set
@@ -325,14 +324,12 @@ sub produce_request_ng {
             ", ACK_ALLREPLICAS, DEFAULT_TIMEOUT_MS, scalar(keys $data)
         );
     while (my ($topic, $tdata) = each($data)) {
-        print STDERR "Working on topic: '$topic'\n"; # XXX
         $packed .= pack("
             s>/a    # Topic
             l>      # Number of partitions
             ", $topic, scalar(keys $tdata)
         );
         while (my ($partId, $pdata) = each($tdata)) {
-            print STDERR "working part '$partId'\n";
             $packed .= pack("
                 l>      # Partition id
                 l>/a    # Message set length and data
@@ -507,8 +504,6 @@ sub _messageset_decode {
 
     # 12 = length( OFFSET + LENGTH )
     while ( $end - $$pos > 12 ) {
-        my $message = {};
-
         my $offset = BITS64     # OFFSET
           ? unpack("x$$pos q>", $$response )
           : Kafka::Int64::unpackq( unpack( "x$$pos a8", $$response ) );
@@ -875,7 +870,7 @@ sub metadata_response_ng {
         $decoded->{brokers}{$nodeid} = [$host, $port];
 
         if ( DEBUG ) {
-            print STDERR "Decoded broker information:\n"
+            print STDERR "Decoded broker($i) information:\n"
                     ."NODEID        = $nodeid\n"
                     ."HOST          = $host\n"
                     ."PORT          = $port\n"
@@ -896,7 +891,7 @@ sub metadata_response_ng {
         $response->{position} += 8 + $strlen;
 
         if (DEBUG) {
-            print STDERR "Decoded Topic:\n"
+            print STDERR "Decoded topic($i) information:\n"
                 ."NAME              = $topic\n"
                 ."PARTITION COUNT   = $num_partitions\n"
                 ;
@@ -911,6 +906,10 @@ sub metadata_response_ng {
         for my $j (1..$num_partitions) {
             my ($partid, $data) = _partitionmetadata_decode_ng($response);
             $decoded->{topics}{$topic}{partitions}{$partid} = $data;
+
+            if (DEBUG) {
+                print STDERR "Partition($j) data:\t$data\n";
+            }
         }
     }
     return $decoded;
@@ -1076,8 +1075,6 @@ sub offsets_response {
     return _error( ERROR_MISMATCH_ARGUMENT ) if bytes::length( $$response ) < 6;
 
     my $decoded = {};
-    my $len = bytes::length( $$response );
-
     $decoded->{header} = _response_header_decode( $response );
 
     unless ( $decoded->{header}->{error_code} )
@@ -1146,87 +1143,14 @@ __END__
 
 =head1 NAME
 
-Kafka::Protocol - functions to process messages in the
-Apache Kafka's 0.7 Wire Format
+Kafka::Protocol - functions to process messages in the Apache Kafka's 0.8 Wire
+Format
 
 =head1 VERSION
 
-This documentation refers to C<Kafka::Consumer> version 0.20
+This documentation refers to C<Kafka::Protocol> version 0.21
 
 =head1 SYNOPSIS
-
-Setting up:
-
-    #-- Export
-    use Kafka::Protocol qw(
-        DEFAULT_MAX_SIZE
-        REQUESTTYPE_PRODUCE
-        REQUESTTYPE_FETCH
-        REQUESTTYPE_MULTIFETCH
-        REQUESTTYPE_MULTIPRODUCE
-        REQUESTTYPE_OFFSETS
-        produce_request
-        fetch_request
-        offsets_request
-        fetch_response
-        offsets_response
-        );
-    
-    print "REQUEST_TYPE(s):\n";
-    print
-        REQUESTTYPE_PRODUCE,        " ",
-        REQUESTTYPE_FETCH           " ",
-        REQUESTTYPE_MULTIFETCH      " ",
-        REQUESTTYPE_MULTIPRODUCE    " ",
-        REQUESTTYPE_OFFSETS         "\n";
-    
-    #-- declaration of variables to test
-    my $topic       = "test";
-    my $partition   = 0;
-    my $single_message = "The first message";
-    my $series_of_messages = [
-        "The first message",
-        "The second message",
-        "The third message",
-        ];
-    my $offset      = 0;
-    my $max_size    = DEFAULT_MAX_SIZE;
-    my $time        = -2;
-    my $max_number  = 100;
-    my ( $str, $hsh_ref, $arr_ref );
-
-Requests:
-
-    #-- Producer request:
-    $str = unpack( "H*",
-        produce_request( $topic, $partition, $single_message );
-    $str = unpack( "H*",
-        produce_request( $topic, $partition, $series_of_messages );
-    
-    #-- Offsets request:
-    $str = unpack( "H*",
-        offsets_request( $topic, $partition, $time, $max_number );
-    
-    #-- Fetch request:
-    $str = unpack( "H*",
-        fetch_request( $topic, $partition, $offset, $max_size );
-
-Responses (look at the L<Sample Data|Kafka::Mock/"Sample Data"> section of
-the L<Kafka::Mock|Kafka::Mock> module for a C<%responses> example):
-
-    #-- Offsets response
-    $arr_ref = offsets_response( \$responses{4} );
-    
-    #-- Fetch response
-    $hsh_ref = fetch_response( \$responses{1} );
-
-An error:
-
-    eval { fetch_response( [] ) };  # expecting to die
-                                    # 'Mismatch argument'
-    print STDERR
-            "(", Kafka::Protocol::last_error(), ") ",
-            $Kafka::Protocol::last_error(), "\n";
 
 =head1 DESCRIPTION
 
@@ -1235,9 +1159,8 @@ to send the message to. When requesting messages, the driver has to specify
 what topic, partition, and offset it wants them pulled from.
 
 While you can request "old" messages if you know their topic, partition, and
-offset, Kafka does not have a message index. You cannot efficiently query
-Kafka for the N-1000th message, or ask for all messages written between
-30 and 35 minutes ago.
+offset, Kafka does not have a message index. You cannot efficiently query Kafka
+for all messages written between 30 and 35 minutes ago.
 
 The main features of the C<Kafka::Protocol> module are:
 
@@ -1249,248 +1172,10 @@ Supports parsing the Apache Kafka Wire Format protocol.
 
 =item *
 
-Supports Apache Kafka Requests and Responses (PRODUCE and FETCH with
-no compression codec attribute now). Within this package we currently support
-access to PRODUCE Request, FETCH Request, OFFSETS Request, FETCH Response,
-OFFSETS Response.
-
-=item *
-
 Support for working with 64 bit elements of the Kafka Wire Format protocol
 on 32 bit systems.
 
 =back
-
-=head2 FUNCTIONS
-
-The following functions are available for C<Kafka::Protocol> module.
-
-=over 3
-
-=item *
-
-B<offset>, B<max_size> or B<time>, B<max_number> are the additional information
-that might be encoded parameters of the messages we want to access.
-
-=back
-
-=head3 C<produce_request( $topic, $partition, $messages )>
-
-Returns a binary PRODUCE request string coded according to
-the Apache Kafka Wire Format protocol, or error will cause the program to
-halt (C<confess>) if the argument is not valid.
-
-C<produce_request()> takes arguments. The following arguments are currently
-recognized:
-
-=over 3
-
-=item C<$topic>
-
-The C<$topic> must be a normal non-false string of non-zero length.
-
-=item C<$partition>
-
-The C<$partition> must be a non-negative integer (of any length).
-That is, a positive integer, or zero.
-
-=item C<$messages>
-
-The C<$messages> is an arbitrary amount of data (a simple data string or
-a reference to an array of the data strings).
-
-=back
-
-=head3 C<fetch_request( $topic, $partition, $offset, $max_size )>
-
-Returns a binary FETCH request string coded according to
-the Apache Kafka Wire Format protocol, or error will cause the program to
-halt (C<confess>) if the argument is not valid.
-
-C<fetch_request()> takes arguments. The following arguments are currently
-recognized:
-
-=over 3
-
-=item C<$topic>
-
-The C<$topic> must be a normal non-false string of non-zero length.
-
-=item C<$partition>
-
-The C<$partition> must be a non-negative integer (of any length).
-That is, a positive integer, or zero.
-
-=item C<$offset>
-
-Offset in topic and partition to start from (64 bits).
-
-The argument must be a non-negative integer (of any length).
-That is, a positive integer, or zero. The argument may be a
-L<Math::BigInt|Math::BigInt> integer on 32 bit system.
-
-=item C<$max_size>
-
-C<$max_number> is the maximum size of the message set to return. The argument
-must be a positive integer (of any length).
-
-=back
-
-=head3 C<offsets_request( $topic, $partition, $time, $max_number )>
-
-Returns a binary OFFSETS request string coded according to
-the Apache Kafka Wire Format protocol, or error will cause the program to
-halt (C<confess>) if the argument is not valid.
-
-C<offsets_request()> takes arguments. The following arguments are currently
-recognized:
-
-=over 3
-
-=item C<$topic>
-
-The C<$topic> must be a normal non-false string of non-zero length.
-
-=item C<$partition>
-
-The C<$partition> must be a non-negative integer (of any length).
-That is, a positive integer, or zero.
-
-=item C<$time>
-
-C<$time> is the timestamp of the offsets before this time - milliseconds since
-UNIX Epoch.
-
-The argument must be a positive number. That is, it is defined and Perl thinks
-it's a number. The argument may be a L<Math::BigInt|Math::BigInt> integer on 32
-bit system.
-
-The special values -1 (latest), -2 (earliest) are allowed.
-
-=item C<$max_number>
-
-C<$max_number> is the maximum number of offsets to retrieve. The argument must
-be a positive integer (of any length).
-
-=back
-
-=head3 C<offsets_response( $response )>
-
-Decodes the argument and returns a reference to the hash representing
-the structure of
-the OFFSETS Response. Offsets are L<Math::BigInt|Math::BigInt> integers
-on 32 bit system. Hash additionally comprises a pair of items C<{error}>
-describing the possible error at line structure of the argument (now only
-"Amount received offsets does not match 'NUMBER of OFFSETS'" possible). Error
-will cause the program to halt (C<confess>) if the argument is not valid.
-
-C<offsets_response()> takes arguments. The following arguments are currently
-recognized:
-
-=over 3
-
-=item C<$response>
-
-C<$response> is a reference to the OFFSETS Response buffer. The buffer
-must be a non-empty string 6+ bytes long.
-
-=back
-
-=head3 C<fetch_response( $response )>
-
-Decodes the argument and returns a reference to the hash representing
-the structure of the FETCH Response. Error will cause the program to halt
-(C<confess>) if the argument is not valid.
-
-C<fetch_response()> takes arguments. The following arguments are currently
-recognized:
-
-=over 3
-
-=item C<$response>
-
-C<$response> is a reference to the FETCH Response buffer.
-The buffer must be a non-empty string 6+ bytes long.
-
-=item C<$buffer_hr>
-
-C<$buffer_hr> is a reference to a hash containing the buffer and position within the buffer.
-The buffer must be a non-empty string 6+ bytes long.
-
-=back
-
-=head3 C<last_errorcode>
-
-This method returns an error code that specifies the position of the
-description in the C<@Kafka::ERROR> array.  Analysing this information
-can be done to determine the cause of the error.
-
-The server or the resource might not be available, access to the resource
-might be denied or other things might have failed for some reason.
-
-=head3 C<last_error>
-
-This method returns an error message that contains information about the
-encountered failure.  Messages returned from this method may contain
-additional details and do not comply with the C<Kafka::ERROR> array.
-
-=head2 EXPORT
-
-None by default.
-
-It has an additional constants available for import, which can be used
-to define the module functions, and to identify REQUEST types
-(look at L</"SEE ALSO"> section):
-
-=over 3
-
-=item
-
-0 - C<REQUESTTYPE_PRODUCE>
-
-=item
-
-1 - C<REQUESTTYPE_FETCH>
-
-=item
-
-2 - C<REQUESTTYPE_MULTIFETCH>
-
-=item
-
-3 - C<REQUESTTYPE_MULTIPRODUCE>
-
-=item
-
-4 - C<REQUESTTYPE_OFFSETS>
-
-=back
-
-=head1 DIAGNOSTICS
-
-C<Kafka::Protocol> is not a user module and any L<functions|/FUNCTIONS> error
-is FATAL.
-FATAL errors will cause the program to halt (C<confess>), since the
-problem is so severe that it would be dangerous to continue. (This can
-always be trapped with C<eval>. Under the circumstances, dying is the best
-thing to do).
-
-=over 3
-
-=item C<Mismatch argument>
-
-This means that you didn't give the right argument to some of
-L<functions|/FUNCTIONS>.
-
-=item C<Invalid message>
-
-This means that the array of messages contain a reference instead a simple data
-string.
-
-=back
-
-For more error description, always look at the message from the L</last_error>
-from the C<Kafka::Protocol::last_error> function.
 
 =head1 SEE ALSO
 
