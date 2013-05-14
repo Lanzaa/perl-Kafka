@@ -1,0 +1,8 @@
+
+Just a quick reminder of the commands to build a deb.
+
+# For Ubuntu
+> dh-make-perl --depends libdigest-crc-perl,libparams-util-perl
+> cd debian
+> debuild
+
