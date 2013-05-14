@@ -1,24 +1,28 @@
-Changes                             History of this package
-MANIFEST                            This file
-Makefile.PL                         Makefile generator
-README                              Get you started with this package
+Changes				History of this package
+coverage.sh			Control code coverage
+examples/console-consumer-p.pl
+examples/console-producer.pl
+examples/topic_lister.pl
 lib/Kafka.pm
-lib/Kafka/Producer.pm
+lib/Kafka/BrokerChannel.pm
 lib/Kafka/Consumer.pm
-lib/Kafka/Protocol.pm
-lib/Kafka/Message.pm
-lib/Kafka/IO.pm
 lib/Kafka/Int64.pm
+lib/Kafka/IO.pm
+lib/Kafka/Message.pm
 lib/Kafka/Mock.pm
-tools/benchmark_consumer.pl         A simple consumer benchmark
-tools/benchmark_producer.pl         A simple producer benchmark
-coverage.sh                         Control code coverage
+lib/Kafka/Producer.pm
+lib/Kafka/Protocol.pm
+Makefile.PL			Makefile generator
+MANIFEST			This file
+META.json			Module meta-data (added by MakeMaker)
+META.yml			Module meta-data (added by MakeMaker)
+README				Get you started with this package
 t/00_compile.t
-t/01_bits64.t
 t/00_Int64/00_compile.t
 t/00_Int64/01_intsum.t
 t/00_Int64/02_packq.t
 t/00_Int64/03_unpackq.t
+t/01_bits64.t
 t/01_IO/00_compile.t
 t/01_IO/01_new.t
 t/01_IO/02_RaiseError.t
@@ -27,6 +31,13 @@ t/01_IO/04_last_error.t
 t/01_IO/05_last_errorcode.t
 t/01_IO/06_send.t
 t/01_IO/07_receive.t
+t/02_BrokerChannel/01_new.t.todo
+t/02_BrokerChannel/02_RaiseError.t.todo
+t/02_BrokerChannel/03_close.t.todo
+t/02_BrokerChannel/04_last_error.t.todo
+t/02_BrokerChannel/05_last_errorcode.t.todo
+t/02_BrokerChannel/06_send.t.todo
+t/02_BrokerChannel/07_receive.t.todo
 t/03_Protocol/00_compile.t
 t/03_Protocol/01_last_error.t
 t/03_Protocol/02_last_errorcode.t
@@ -51,16 +62,15 @@ t/06_Consumer/03_last_errorcode.t
 t/06_Consumer/04_fetch.t
 t/06_Consumer/05_offsets.t
 t/06_Consumer/06_close.t
-t/99_usage/01_kafka.t                   Kafka usage examples
-t/99_usage/03_kafka_bench.t             Kafka Benchmark test
+t/99_usage/01_kafka.t		Kafka usage examples
+t/99_usage/03_kafka_bench.t	Kafka Benchmark test
+TODO
+tools/benchmark_consumer.pl	A simple consumer benchmark
+tools/benchmark_producer.pl	A simple producer benchmark
 xt/author/92_vars.t
 xt/author/93_versions.t
 xt/author/94_fixme.t
 xt/author/95_critic.t
-xt/release/96_kwalitee.t
-xt/release/97_distribution.t
-xt/release/98_pod.t
-xt/release/99_pod_coverage.t
 xt/release/00_Int64/98_pod.t
 xt/release/00_Int64/99_pod_coverage.t
 xt/release/01_IO/98_pod.t
@@ -83,7 +93,9 @@ xt/release/05_Message/98_pod.t
 xt/release/05_Message/99_pod_coverage.t
 xt/release/06_Consumer/98_pod.t
 xt/release/06_Consumer/99_pod_coverage.t
-xt/release/99_usage/00_mock.t           Mock server usage examples
-xt/release/99_usage/02_mock_error.t     Test errors in FETCH & OFFSETS Response
-META.yml                                Module meta-data (added by MakeMaker)
-META.json                               Module meta-data (added by MakeMaker)
+xt/release/96_kwalitee.t
+xt/release/97_distribution.t
+xt/release/98_pod.t
+xt/release/99_pod_coverage.t
+xt/release/99_usage/00_mock.t	Mock server usage examples
+xt/release/99_usage/02_mock_error.t	Test errors in FETCH & OFFSETS Response
