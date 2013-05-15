@@ -47,7 +47,6 @@ sub new {
     if (defined($opts{BC})) {
         $self->{BC} = $opts{BC};
     } elsif (defined($opts{broker_list})) {
-        print STDERR "broker_list: '$opts{broker_list}'\n";
         $self->{BC} = Kafka::BrokerChannel->new(
             broker_list => $opts{broker_list},
         );
