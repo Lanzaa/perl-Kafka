@@ -154,13 +154,29 @@ sub sendSyncRequest {
     }
     my $correlationId = $self->_getCorrId();
     if (DEBUG) {
-        print STDERR "Writing to broker with id '$brokerId'\n";
+        print STDERR "DEBUG: "
+                ."Broker: '$brokerId'\t"
+                ."correlationid: '$correlationId'\t"
+                ."\n";
     }
     my $send_error = $self->_sendIO($io, $apiKey, $correlationId, $dataRef);
     my $response = $self->_receiveIO($io);
+    if (DEBUG) {
+        print STDERR "IO resp: ".Dumper(\$response);
+        print STDERR "IO data: '".unpack("H*", $response->{data})."'\n";
+    }
     if (!defined($response) || $response->{correlationId} != $correlationId) {
-        # Note: Since we are only sending one request at a time this should never happen.
-        confess("[BUG] sendSyncRequest did not receive the proper correlation id.");
+        if (defined($response) && $apiKey == 2) {
+            # XXX: Offset req/resp do not preserve the correlation id, pre 0.8
+            # This is a work around, please remove if it is fixed
+            if (DEBUG) {
+                warn("[NOTE] Offset reponse does not have the same correlation id as request."); # XXX
+            }
+        } else {
+            # Note: Since we are only sending one request at a time this should
+            # never happen.
+            confess("[BUG] sendSyncRequest did not receive the proper correlation id.");
+        }
     }
     return $response;
 }

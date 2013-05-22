@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+#!/usr/bin/perl -I ../lib/ -I lib/
 
 use strict;
 use warnings;
@@ -13,27 +13,42 @@ use Kafka qw(
     DEFAULT_MAX_SIZE
     );
 
-# common information
-print "This is Kafka package $Kafka::VERSION\n";
-print "You have a ", BITS64 ? "64" : "32", " bit system\n";
-
-use Kafka::IO;
 use Kafka::Consumer;
 
-# connect to local server with the defaults
-my $io = Kafka::IO->new( host => "localhost", port => 9093 );
+use Getopt::Long;
+use Data::Dumper;
 
-# decoding of the error code
-unless ( $io )
-{
-    print STDERR "last error: ",
-        $Kafka::ERROR[Kafka::IO::last_errorcode], "\n";
+sub usage {
+    my $exit = shift;
+    print <<USAGE;
+> ./console-consumer.pl --broker localhost:9092 --topic testing03 --partition 0
+USAGE
+    return $exit;
+}
+
+my @brokers = ();
+my $topic = "";
+my $partition = undef;
+GetOptions(
+    "broker=s" => \@brokers,
+    "topic=s" => \$topic,
+    "partition=i" => \$partition,
+);
+
+# Usage check
+if (!defined($partition) || scalar(@brokers) == 0 || length($topic) == 0) {
+    exit(usage(1));
 }
 
 #-- Consumer
-my $consumer = Kafka::Consumer->new( IO => $io );
+my $consumer = Kafka::Consumer->new(
+    broker_list => join(",", @brokers),
+    #RaiseError => 0,
+);
 
-my $topic = "test04";
+unless(defined($consumer)) { warn("No consumer!"); }
+
+print STDERR "We have a consumer.\n"; # XXX
 
 # Get a list of valid offsets up max_number before the given time
 my $offsets;
@@ -85,4 +100,4 @@ while ( my $messages = $consumer->fetch(
     sleep 3;
 }
 
-$consumer->close;
+$consumer->close();

@@ -21,11 +21,13 @@ our @EXPORT_OK  = qw(
     produce_response_ng
     fetch_request
     offsets_request
+    offsets_request_ng
     fetch_response
     offsets_response
     request_header_encode
     APIKEY_METADATA
     APIKEY_PRODUCE
+    APIKEY_OFFSETS
     CLIENT_ID
     );
 
@@ -34,7 +36,7 @@ our $VERSION = '0.21';
 use bytes;
 use Carp;
 use Digest::CRC     qw( crc32 );
-use Params::Util    qw( _STRING _NONNEGINT _POSINT _NUMBER _ARRAY0 _SCALAR );
+use Params::Util    qw( _STRING _NONNEGINT _POSINT _NUMBER _ARRAY0 _SCALAR _HASHLIKE );
 use IO::Uncompress::Gunzip qw{ gunzip };
 
 use Data::Dumper;
@@ -681,6 +683,96 @@ sub fetch_request {
 }
 
 # OFFSETS Request --------------------------------------------------------------
+
+##
+# used to request offsets for a set of topics and partitions
+#
+# Expects:
+#   * a hash
+#   {
+#   topic01 => [ [partitionId, time, max_number] ],
+#   topic02 => [ [0, -1, 1], [1, -1, 1], [2, -1, 1] ],
+#   }
+# Returns:
+#   * a reference to the packed data
+##
+# TODO: impl, test
+sub offsets_request_ng {
+    my $input = _HASHLIKE( shift ) or return _error( ERROR_MISMATCH_ARGUMENT );
+
+    my $packed = pack("
+        l>  # ReplicaID, always -1
+        l>  # Number of topics
+        ", -1, scalar(keys $input)
+    ); 
+
+    while (my ($topic, $tdata) = each($input)) {
+        # XXX check arguments. topic = string, $tdata = array
+        $packed .= pack("
+            s>/a    # Topic
+            l>      # Number of partitions
+            ", $topic, scalar(@$tdata)
+        );
+        foreach my $partition_data (@$tdata) {
+            # XXX _ARRAY( $partition_data ) or error out
+            my ($partitionId, $time, $max_number) = @$partition_data;
+            # XXX check arguments
+            $packed .= pack("l>", $partitionId); # Partition ID
+            $packed .= ( BITS64 
+                        ? pack( "q>", $time + 0 ) 
+                        : Kafka::Int64::packq( $time + 0 ) );   # TIME
+            $packed .= pack("N", $max_number);
+            if ( DEBUG )
+            {
+                print STDERR "Offsets request:\n"
+                ."PARTITION          = $partitionId\n"
+                ."TIME               = $time\n"
+                ."MAX_NUMBER         = $max_number\n"
+                ;
+            }
+        }
+    }
+
+    return \$packed;
+
+#    my $partition       = shift;
+#    my $time            = shift;
+#    my $max_number      = _POSINT( shift ) or return _error( ERROR_MISMATCH_ARGUMENT );
+#
+#    return _error( ERROR_MISMATCH_ARGUMENT ) unless defined( _NONNEGINT( $partition ) );
+#    ( ref( $time ) eq "Math::BigInt" ) or defined( _NUMBER( $time ) ) or return _error( ERROR_MISMATCH_ARGUMENT );
+#    $time = int( $time );
+#    return _error( ERROR_MISMATCH_ARGUMENT ) if $time < -2;
+#
+#    # TODO Allow multiple partition requests?
+#    my $encoded = pack("l>l>", -1, 1); # Replica id and topic count
+#    $encoded .= pack("s>/a", $topic);
+#    $encoded .= pack("l>l>", 1, $partition);
+#    $encoded .= ( BITS64 ? pack( "q>", $time + 0 ) : Kafka::Int64::packq( $time + 0 ) );   # TIME
+#    $encoded .= pack( "
+#                      N                                   # MAX_NUMBER
+#                      ",
+#                      $max_number,
+#            );
+#
+#    if ( DEBUG )
+#    {
+#        print STDERR "Offsets request:\n"
+#            ."TIME               = $time\n"
+#            ."MAX_NUMBER         = $max_number\n"
+#            ."ENCODED_LEN        = ".bytes::length( $encoded )."\n"
+#        ;
+#    }
+#
+#    $encoded = _request_header_encode(
+#            bytes::length( $encoded ),
+#            APIKEY_OFFSETS,
+#            CLIENT_ID, # ClientID
+#            ).$encoded;
+#
+#    return $encoded;
+#
+}
 
 sub offsets_request {
     my $topic           = _STRING( shift ) or return _error( ERROR_MISMATCH_ARGUMENT );
