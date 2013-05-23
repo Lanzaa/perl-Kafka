@@ -88,11 +88,10 @@ use constant {
     REPLICAID                           => -1,
     SENTINEL_OFFSET                     => -1, # Can be anything
 
-    # XXX These probably should not be constant
+    # TODO These probably should be user setable
     CLIENT_ID                           => "perl-kafka",
     MAX_WAIT_TIME                       => 2,
     MIN_BYTES                           => 1,
-    CORRELATIONID                       => -1,
 };
 
 our $_last_error;
@@ -368,6 +367,7 @@ sub produce_request_ng {
 #   reference to an array of scalars
 
 sub produce_request {
+    confess("[BUG] This should be removed.");
     my $topic           = _STRING( shift ) or return _error( ERROR_MISMATCH_ARGUMENT );
     my $partition       = shift;
     my $messages        = shift;
@@ -501,10 +501,34 @@ sub _messageset_encode {
 }
 
 ##
+# Used to decode a messageset from a 'buffer' object.
+#
+# Expects:
+#   * buffer - contains the data and current position in the buffer
+#       { 
+#         position => 213,
+#         data => '...',
+#       }
+#   * length - expected length of the message set
+##
+# TODO: rework to new style
+# Note may not work if there are multiple messagesets 
+sub _messageset_decode_ng {
+    my ($buffer, $length) = @_;
+    my $d = {
+        position => \$buffer->{position},
+        data => \$buffer->{data},
+    };
+    my $end = $length + $buffer->{position};
+    return _messageset_decode($d, $end);
+}
+
+##
 # Expects a buffer_hr and an end position
 #
 # Returns an array of messages
 ##
+# TODO rework
 sub _messageset_decode {
     my $buffer_hr   = shift;
     my $end         = shift;
@@ -516,7 +540,7 @@ sub _messageset_decode {
         print STDERR "Decoding message set:\n"
             ."pos           = '$$pos'\n"
             ."end           = '$end'\n"
-            ."response      = '".unpack("H*", $$response)."'\n"
+            #."response      = '".unpack("H*", $$response)."'\n"
             ;
     }
 
@@ -530,6 +554,13 @@ sub _messageset_decode {
         $$pos += 8;
         my $length = unpack("x$$pos l>", $$response);
         $$pos += 4;
+
+        if (DEBUG) {
+            print STDERR "Decoding message at:\n"
+                ."offset:   = $offset\n"
+                ."length:   = $length\n"
+                ;
+        }
 
         last if ( ( $end - $$pos ) < $length ); # Incomplete message
 
@@ -662,9 +693,9 @@ sub _decode_message {
 #           },
 #       topic02 => { ... },
 #    }
-#   * (Optional) a hash of options. TODO list options
-#       - max_wait_time       XXX not implemented (max wait time)
-#       - min_bytes     XXX not implemented
+#   * (Optional) a hash of options.
+#       - max_wait_time     XXX not implemented (max wait time)
+#       - min_bytes         XXX not implemented
 # Returns:
 #   * a reference to the packed data
 ##
@@ -778,16 +809,16 @@ sub offsets_request_ng {
     ); 
 
     while (my ($topic, $tdata) = each($input)) {
-        # XXX check arguments. topic = string, $tdata = array
+        # TODO check arguments. topic = string, $tdata = array
         $packed .= pack("
             s>/a    # Topic
             l>      # Number of partitions
             ", $topic, scalar(@$tdata)
         );
         foreach my $partition_data (@$tdata) {
-            # XXX _ARRAY( $partition_data ) or error out
+            # TODO _ARRAY( $partition_data ) or error out
             my ($partitionId, $time, $max_number) = @$partition_data;
-            # XXX check arguments
+            # TODO check arguments
             $packed .= pack("l>", $partitionId); # Partition ID
             $packed .= ( BITS64 
                         ? pack( "q>", $time + 0 ) 
@@ -1188,51 +1219,42 @@ sub produce_response {
 # FETCH Response
 
 ##
-# TODO
+# Used to decode a fetch response.
 ##
 sub fetch_response_ng {
-    confess("[BUG] Fetch response not implemented.");
+    my $response = shift;
+    my $ret = {};
 
+    my $num_topics = unpackRes("l>", $response);
+    $response->{position} += 4;
 
-    my $response = _SCALAR( shift ) or return _error( ERROR_MISMATCH_ARGUMENT );
+    foreach my $i (1..$num_topics) {
+        my ($strlen, $topic, $num_partitions) =
+            unpackRes("s>X2 s>/a l>", $response);
+        $response->{position} += 2 + 4 + $strlen;
 
-    _STRING( $$response ) or return _error( ERROR_MISMATCH_ARGUMENT );
-    # 6 = length( RESPONSE_LENGTH + ERROR_CODE )
-    return _error( ERROR_MISMATCH_ARGUMENT ) if bytes::length( $$response ) < 6;
-
-    my $decoded = {};
-    if ( scalar keys %{ $decoded->{header} = _response_header_decode( $response ) } )
-    {
-        my $topic_count = unpack("x$position l>", $$response);
-        $position += 4;
-        for my $i (1 .. $topic_count) {
-            my ($strlen, $topic, $partition_count) =
-                unpack("x$position s>X2 s>/a l>", $$response);
-            $position += 6 + $strlen;
-
-            for my $j (1 .. $partition_count) {
-                my ($partition, $error_code, $highwaterp, $messageset_size) =
-                    unpack("x$position l> s> a8 l>", $$response);
-                $position += 18;
-                my $highwater = BITS64     # OFFSET
-                  ? unpack("q>", $highwaterp )
-                  : Kafka::Int64::unpackq($highwaterp);
-
-                if (DEBUG) {
-                    print STDERR ""
-                        ."partition         = $partition\n"
-                        ."error code        = $error_code\n"
-                        ."message set size  = $messageset_size\n"
-                        ;
-                }
-                $decoded->{header}->{error_code} = $error_code;
-                my $buf_obj = { data => $response, position => \$position };
-                $decoded->{messages} = _messageset_decode( $buf_obj, $position+$messageset_size ) unless $error_code;
+        $ret->{$topic} = {};
+        foreach my $j (1..$num_partitions) {
+            my ($partition, $error_code, $highwaterp, $messageset_size) =
+                unpackRes("l> s> a8 l>", $response);
+            $response->{position} += 4 + 2 + 8 + 4; # 18
+            # highwaterp is a packed int64
+            if (DEBUG) {
+                print STDERR ""
+                    ."partition         = $partition\n"
+                    ."error code        = $error_code\n"
+                    ."message set size  = $messageset_size\n"
+                    ;
             }
+            # Get a reference to the array of messages from this data
+            my $messages = _messageset_decode_ng($response, $messageset_size);
+            $ret->{$topic}->{$partition} = {
+                error_code => $error_code,
+                messages => $messages,
+            };
         }
     }
-
-    return $decoded;
+    return $ret;
 }
 
 sub fetch_response {

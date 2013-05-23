@@ -23,32 +23,52 @@ use Kafka::Protocol qw(
     REQUESTTYPE_FETCH
     REQUESTTYPE_OFFSETS
     fetch_request
+    fetch_request_ng
     fetch_response
+    fetch_response_ng
     offsets_request
+    offsets_request_ng
     offsets_response
+    offsets_response_ng
+    APIKEY_OFFSETS
+    APIKEY_FETCH
     );
 use Kafka::Message;
+use Kafka::BrokerChannel;
 
 if ( !BITS64 ) { eval 'use Kafka::Int64; 1;' or die "Cannot load Kafka::Int64 : $@"; }  ## no critic
+
+use constant DEBUG => 0;
+
+BEGIN { if (DEBUG) { use Data::Dumper; } }
 
 our $_last_error;
 our $_last_errorcode;
 
 sub new {
-    my $class   = shift;
+    my ($class, %opts) = @_;
     my $self = {
-        IO              => undef,
-        RaiseError      => 0,
-        };
+        BC          => undef,
+        RaiseError  => 0,
+    };
 
-    my @args = @_;
-    while ( @args )
+    while ( my ($key, $value) = each(%opts) )
     {
-        my $k = shift @args;
-        $self->{ $k } = shift @args if exists $self->{ $k };
+        $self->{ $key } = $value if exists $self->{ $key };
     }
 
     bless( $self, $class );
+
+    if (!defined($self->{BC}) && defined($opts{broker_list})) {
+        if (DEBUG) {
+            print STDERR "broker_list: '$opts{broker_list}'\n";
+        }
+        $self->{BC} = Kafka::BrokerChannel->new(
+            broker_list => $opts{broker_list},
+        );
+    } else {
+        croak("A broker_list must be supplied to new Kafka::Consumers.");
+    }
 
     $@ = "";
     unless ( defined( _NONNEGINT( $self->{RaiseError} ) ) )
@@ -57,7 +77,7 @@ sub new {
         return $self->_error( ERROR_MISMATCH_ARGUMENT );
     }
     $self->{last_error} = $self->{last_errorcode} = $_last_error = $_last_errorcode = undef;
-    _INSTANCE( $self->{IO}, 'Kafka::IO' ) or return $self->_error( ERROR_MISMATCH_ARGUMENT );
+    _INSTANCE( $self->{BC}, 'Kafka::BrokerChannel' ) or return $self->_error( ERROR_MISMATCH_ARGUMENT );
 
     $_last_error        = $_last_errorcode          = undef;
     $self->{last_error} = $self->{last_errorcode}   = undef;
@@ -130,6 +150,10 @@ sub _receive {
     return $response;
 }
 
+##
+# Used to fetch messages from a specific topic/partition/offset
+##
+# TODO: errors, tests
 sub fetch {
     my $self        = shift;
     my $topic       = _STRING( shift ) or return $self->_error( ERROR_MISMATCH_ARGUMENT );
@@ -143,31 +167,36 @@ sub fetch {
     $_last_error        = $_last_errorcode          = undef;
     $self->{last_error} = $self->{last_errorcode}   = undef;
 
-    my $sent;
-    eval { $sent = $self->{IO}->send( fetch_request( $topic, $partition, $offset, $max_size ) ) };
-    return $self->_error( $self->{IO}->last_errorcode, $self->{IO}->last_error )
-        unless ( defined $sent );
+    my $pack = fetch_request_ng({
+            $topic => {
+                $partition => [$offset, $max_size],
+            },
+    });
 
-    my $decoded = {};
-    eval { $decoded = $self->_receive( REQUESTTYPE_FETCH ) };
-    return $self->_error( $self->{last_errorcode}, $self->{last_error} )
-        if ( $self->{last_error} );
-
+    my $leader = $self->{BC}->getLeaderBrokerId($topic, $partition);
+    my $response = $self->{BC}->sendSyncRequest($leader, APIKEY_FETCH, $pack);
+    my $fetch_data = fetch_response_ng($response);
+    my $decoded = $fetch_data->{$topic}->{$partition};
     if ( defined $decoded->{messages} )
     {
         my $response = [];
         my $next_offset = $offset;
         foreach my $message ( @{$decoded->{messages}} )
         {
-            # find the offset of the next message,
-            if ( BITS64 )
-            {
-                $message->{offset} = $next_offset;
-                $next_offset += 1;
+            # Decide if we should skip this message.  This is needed, if we
+            # fetch into the middle of a compressed set.
+            if ( BITS64 ) {
+                if ($message->{offset} < $offset) {
+                    next;
+                }
+            } else {
+                # XXX TODO Int64 stuff
+                confess("[BUG] Offset comparison in fetch not implemented for non 64bit systems.");
             }
-            else
-            {
-                $message->{offset} = Kafka::Int64::intsum( $next_offset, 0 );
+            # Write the offset of the next message,
+            if ( BITS64 ) {
+                $next_offset += 1;
+            } else {
                 $next_offset = Kafka::Int64::intsum( $next_offset, 1 );
             }
             $message->{next_offset} = $next_offset;
@@ -185,6 +214,19 @@ sub fetch {
     }
 }
 
+##
+# Used to request offsets for a specific topic/partition.
+#
+# Expects:
+#   * topic
+#   * partition - the number of the partition
+#   * time - the timestamp to fetch after
+#   * max_number - the maximum number of offsets to request for this partition
+#
+# Returns:
+#   * an array of offsets
+##
+# TODO: impl error handling, test
 sub offsets {
     my $self        = shift;
     my $topic       = _STRING( shift ) or return $self->_error( ERROR_MISMATCH_ARGUMENT );
@@ -200,30 +242,24 @@ sub offsets {
     $_last_error        = $_last_errorcode          = undef;
     $self->{last_error} = $self->{last_errorcode}   = undef;
 
-    my $sent;
-    eval { $sent = $self->{IO}->send( offsets_request( $topic, $partition, $time, $max_number ) ) };
-    return $self->_error( $self->{IO}->last_errorcode, $self->{IO}->last_error )
-        unless ( defined $sent );
+    # Arguments checked
 
-    my $decoded = {};
-    eval { $decoded = $self->_receive( REQUESTTYPE_OFFSETS ) };
-    return $self->_error( $self->{last_errorcode}, $self->{last_error} )
-        if ( $self->{last_error} );
+    my $pack = offsets_request_ng({
+        $topic => [ [$partition, $time, $max_number] ],
+    });
+    my $leader = $self->{BC}->getLeaderBrokerId($topic, $partition);
+    my $response = $self->{BC}->sendSyncRequest($leader, APIKEY_OFFSETS, $pack);
 
-    if ( defined $decoded->{offsets} )
-    {
-        my $response = [];
-        push @$response, @{$decoded->{offsets}};
-        return $response;
+    my $return = offsets_response_ng($response);
+    if (DEBUG) {
+        print STDERR "Offset Response: ".Dumper(\$return);
     }
-    elsif ( $decoded->{error_code} )
-    {
-        return $self->_error( ERROR_IN_ERRORCODE, $Kafka::ERROR[ERROR_IN_ERRORCODE].": ".( $Kafka::ERROR_CODE{ $decoded->{error_code} } || $Kafka::ERROR_CODE{ -1 } ) );
-    }
-    else
-    {
-        return $self->_error( ERROR_NOTHING_RECEIVE );
-    }
+
+    my $data = $return->{$topic}->{$partition};
+    # TODO check error code
+    # $data->{error_code}
+
+    return $data->{offsets};
 }
 
 sub close {

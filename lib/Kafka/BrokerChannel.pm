@@ -22,7 +22,7 @@ use Kafka::Protocol qw(
 use Kafka::IO;
 
 use constant DEBUG => 0;
-use constant DEBUG_IO => 0; # XXX Used for dumping the bytes that are being sent over the wire.
+use constant DEBUG_IO => 0; # Used for dumping the bytes that are being sent over the wire.
 
 BEGIN { if(DEBUG) { use Data::Dumper; } }
 
