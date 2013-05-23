@@ -306,5 +306,22 @@ sub getTopicMetadata {
     return $ret->{partitions};
 }
 
+##
+# Used to get the brokerId of the leader for a topic, partition.
+#
+# Expects:
+#   * topic name
+#   * partition number
+#
+# Returns:
+#   * brokerId
+##
+# TODO: impl, test, doc
+sub getLeaderBrokerId {
+    my ($self, $topic, $partition) = @_;
+    my $topic_metadata = $self->getTopicMetadata($topic);
+    return $topic_metadata->{$partition}->{leader};
+}
+
 
 1;

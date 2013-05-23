@@ -55,9 +55,9 @@ my $offsets;
 my $hw = 0;
 if ( $offsets = $consumer->offsets(
     $topic,             # topic
-    0,                  # partition
-    TIMESTAMP_LATEST, # time
-    1, # max_number
+    $partition,         # partition
+    TIMESTAMP_EARLIEST, # time
+    2, # max_number
     ) )
 {
     foreach my $offset ( @$offsets )
@@ -75,11 +75,13 @@ if ( !$offsets or $consumer->last_error )
         $consumer->last_error, "\n";
 }
 
+print STDERR "Beginning to fetch\n"; # XXX
+
 # Consuming messages
 while ( my $messages = $consumer->fetch(
     $topic,             # topic
-    0,                  # partition
-    $hw,                  # offset
+    $partition,         # partition
+    $hw,                # offset
     DEFAULT_MAX_SIZE    # Maximum size of MESSAGE(s) to receive
     ) )
 {

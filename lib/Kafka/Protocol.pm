@@ -20,14 +20,18 @@ our @EXPORT_OK  = qw(
     produce_response
     produce_response_ng
     fetch_request
+    fetch_request_ng
     offsets_request
     offsets_request_ng
     fetch_response
+    fetch_response_ng
     offsets_response
+    offsets_response_ng
     request_header_encode
     APIKEY_METADATA
     APIKEY_PRODUCE
     APIKEY_OFFSETS
+    APIKEY_FETCH
     CLIENT_ID
     );
 
@@ -111,12 +115,26 @@ sub unpackRes {
     return unpack("x$response->{position} ".$pack_string, $response->{data});
 }
 
+##
+# Used to unpack a 64 bit number. Ex an offset.
+##
 sub unpackRes64 {
     my $response = shift;
     return ( BITS64
         ? unpack("x$response->{position} q>", $response->{data} )
         : Kafka::Int64::unpackq(unpack("x$response->{position} a8", $response->{data}))
     );
+}
+
+##
+# Used to pack a 64 bit number. Ex an offset.
+##
+sub pack64 {
+    my $number = shift;
+    return ( BITS64 
+        ? pack( "q>", $number + 0 ) 
+        : Kafka::Int64::packq( $number ) 
+    );   # OFFSET
 }
 
 sub last_error {
@@ -300,7 +318,7 @@ sub metadata_request_ng {
 #   * a hash of the data to pack: {
 #       topic01 => {
 #           part01 => [[topic01, key, 'data11'], [topic01, key, 'data12']],
-#           part02 => [[topic02, key, 'data21']],
+#           part02 => [[topic01, key, 'data21']],
 #           },
 #       topic02 => { ... },
 #    }
@@ -632,6 +650,59 @@ sub _decode_message {
 }
 
 # FETCH Request ----------------------------------------------------------------
+
+##
+# Used to pack a fetch request
+#
+# Expects:
+#   * a hash of the data to pack: {
+#       topic01 => {
+#           part01 => [offset, max_bytes],
+#           part02 => [offset, max_bytes],
+#           },
+#       topic02 => { ... },
+#    }
+#   * (Optional) a hash of options. TODO list options
+#       - max_wait_time       XXX not implemented (max wait time)
+#       - min_bytes     XXX not implemented
+# Returns:
+#   * a reference to the packed data
+##
+# TODO impl, test, doc
+sub fetch_request_ng {
+    my ($data, $opts) = @_;
+
+    # Encode the header for fetch request
+    my $packed = pack("
+        l>      # ReplicaId
+        l>      # Max Wait time
+        l>      # Min Bytes
+        l>      # Number of topics
+        ", REPLICAID, MAX_WAIT_TIME, MIN_BYTES, scalar(keys $data));
+
+    while (my ($topic, $tdata) = each($data)) {
+        $packed .= pack("
+            s>/a    # Topic 
+            l>      # Number of partitions
+            ", $topic, scalar(keys($tdata)));
+
+        while (my ($partition, $pdata) = each($tdata)) {
+            my ($offset, $max_bytes) = @$pdata;
+            $packed .= pack("l>", $partition)
+                    .pack64($offset)
+                    .pack("l>", $max_bytes);
+            if ( DEBUG )
+            {
+                print STDERR "Fetch request:\n"
+                    ."PARTITION          = $partition\n"
+                    ."OFFSET             = $offset\n"
+                    ."MAX_BYTES          = $max_bytes\n";
+            }
+        }
+    }
+    return \$packed;
+}
+
 
 sub fetch_request {
     my $topic           = _STRING( shift ) or return _error( ERROR_MISMATCH_ARGUMENT );
@@ -1087,7 +1158,8 @@ sub produce_response_ng {
     my $num_topics = unpackRes("l>", $response);
     $response->{position} += 4;
     foreach my $i (1..$num_topics) {
-        my ($strlen, $topic, $num_partitions) = unpackRes("s>X2 s>/a l>", $response);
+        my ($strlen, $topic, $num_partitions) 
+            = unpackRes("s>X2 s>/a l>", $response);
         $response->{position} += 2 + 4 + $strlen;
         $ret->{$topic} = {};
 
@@ -1114,6 +1186,54 @@ sub produce_response {
 #   None
 
 # FETCH Response
+
+##
+# TODO
+##
+sub fetch_response_ng {
+    confess("[BUG] Fetch response not implemented.");
+
+
+    my $response = _SCALAR( shift ) or return _error( ERROR_MISMATCH_ARGUMENT );
+
+    _STRING( $$response ) or return _error( ERROR_MISMATCH_ARGUMENT );
+    # 6 = length( RESPONSE_LENGTH + ERROR_CODE )
+    return _error( ERROR_MISMATCH_ARGUMENT ) if bytes::length( $$response ) < 6;
+
+    my $decoded = {};
+    if ( scalar keys %{ $decoded->{header} = _response_header_decode( $response ) } )
+    {
+        my $topic_count = unpack("x$position l>", $$response);
+        $position += 4;
+        for my $i (1 .. $topic_count) {
+            my ($strlen, $topic, $partition_count) =
+                unpack("x$position s>X2 s>/a l>", $$response);
+            $position += 6 + $strlen;
+
+            for my $j (1 .. $partition_count) {
+                my ($partition, $error_code, $highwaterp, $messageset_size) =
+                    unpack("x$position l> s> a8 l>", $$response);
+                $position += 18;
+                my $highwater = BITS64     # OFFSET
+                  ? unpack("q>", $highwaterp )
+                  : Kafka::Int64::unpackq($highwaterp);
+
+                if (DEBUG) {
+                    print STDERR ""
+                        ."partition         = $partition\n"
+                        ."error code        = $error_code\n"
+                        ."message set size  = $messageset_size\n"
+                        ;
+                }
+                $decoded->{header}->{error_code} = $error_code;
+                my $buf_obj = { data => $response, position => \$position };
+                $decoded->{messages} = _messageset_decode( $buf_obj, $position+$messageset_size ) unless $error_code;
+            }
+        }
+    }
+
+    return $decoded;
+}
 
 sub fetch_response {
     my $response = _SCALAR( shift ) or return _error( ERROR_MISMATCH_ARGUMENT );
@@ -1158,6 +1278,48 @@ sub fetch_response {
 }
 
 # OFFSETS Response
+
+##
+# Used to decode offsets responses.
+##
+sub offsets_response_ng {
+    my $response = shift;
+    # TODO check for a hash
+    my $ret = {};
+
+    my $num_topics = unpackRes("l>", $response);
+    $response->{position} += 4;
+    foreach my $i (1..$num_topics) {
+        my ($strlen, $topic, $num_partitions) 
+            = unpackRes("s>X2 s>/a l>", $response);
+        $response->{position} += 2 + 4 + $strlen;
+
+        $ret->{$topic} = {};
+        foreach my $j (1..$num_partitions) {
+            my ($partition, $error_code, $num_offsets) 
+                = unpackRes("l> s> l>", $response);
+            $response->{position} += 4 + 2 + 4;
+
+            my $offsets = [];
+            foreach my $k (1..$num_offsets) {
+                my $offset = unpackRes64($response); # 64 bit offset
+                $response->{position} += 8;
+                push(@{$offsets}, $offset);
+            }
+            $ret->{$topic}->{$partition}->{offsets} = $offsets;
+            $ret->{$topic}->{$partition}->{error_code} = $error_code;
+
+            if (DEBUG) {
+                warn("[BUG] Error code for offsets request is not checked");
+                print STDERR "Offsets response topic: $topic, part: $partition\n"
+                    ."offsets:  = ".join(",",$offsets)."\n"
+                    ."error:    = $error_code\n"
+                    ;
+            }
+        }
+    }
+    return $ret;
+}
 
 sub offsets_response {
     my $response = _SCALAR( shift ) or return _error( ERROR_MISMATCH_ARGUMENT );
