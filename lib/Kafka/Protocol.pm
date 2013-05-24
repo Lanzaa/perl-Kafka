@@ -35,7 +35,7 @@ our @EXPORT_OK  = qw(
     CLIENT_ID
     );
 
-our $VERSION = '0.21';
+our $VERSION = '0.22';
 
 use bytes;
 use Carp;
@@ -1399,7 +1399,7 @@ Format
 
 =head1 VERSION
 
-This documentation refers to C<Kafka::Protocol> version 0.21
+This documentation refers to C<Kafka::Protocol> version 0.22
 
 =head1 SYNOPSIS
 

@@ -1,5 +1,9 @@
 Revision history for Kafka package
 
+0.22  Fri May  24 2013
+    CHANGES:
+    - Updated Consumer to use BrokerChannels
+
 0.21  Mon May  13 2013
     CHANGES:
     - Initial support for a producer and multiple brokers

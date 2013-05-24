@@ -37,7 +37,7 @@ our @EXPORT_OK  = qw(
 #    ERRORCODE_UNKNOWN
 #    ERRORCODE_WRONG_PARTITION_CODE
 
-our $VERSION = '0.21';
+our $VERSION = '0.22';
 
 use Config;
 
@@ -102,7 +102,7 @@ Kafka - constants and messages used by the Kafka package modules
 
 =head1 VERSION
 
-This documentation refers to C<Kafka> package version 0.21
+This documentation refers to C<Kafka> package version 0.22
 
 =head1 SYNOPSIS
 

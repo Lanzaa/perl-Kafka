@@ -1,6 +1,6 @@
 Changes				History of this package
 coverage.sh			Control code coverage
-examples/console-consumer-p.pl
+examples/console-consumer.pl
 examples/console-producer.pl
 examples/topic_lister.pl
 lib/Kafka.pm
@@ -31,13 +31,6 @@ t/01_IO/04_last_error.t
 t/01_IO/05_last_errorcode.t
 t/01_IO/06_send.t
 t/01_IO/07_receive.t
-t/02_BrokerChannel/01_new.t.todo
-t/02_BrokerChannel/02_RaiseError.t.todo
-t/02_BrokerChannel/03_close.t.todo
-t/02_BrokerChannel/04_last_error.t.todo
-t/02_BrokerChannel/05_last_errorcode.t.todo
-t/02_BrokerChannel/06_send.t.todo
-t/02_BrokerChannel/07_receive.t.todo
 t/03_Protocol/00_compile.t
 t/03_Protocol/01_last_error.t
 t/03_Protocol/02_last_errorcode.t

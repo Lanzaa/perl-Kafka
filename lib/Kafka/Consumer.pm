@@ -6,7 +6,7 @@ use warnings;
 
 # Basic functionalities to include a simple Consumer
 
-our $VERSION = '0.21';
+our $VERSION = '0.22';
 
 use Carp;
 use Params::Util qw( _INSTANCE _STRING _NONNEGINT _POSINT _NUMBER );
@@ -20,15 +20,9 @@ use Kafka qw(
     BITS64
     );
 use Kafka::Protocol qw(
-    REQUESTTYPE_FETCH
-    REQUESTTYPE_OFFSETS
-    fetch_request
     fetch_request_ng
-    fetch_response
     fetch_response_ng
-    offsets_request
     offsets_request_ng
-    offsets_response
     offsets_response_ng
     APIKEY_OFFSETS
     APIKEY_FETCH
@@ -110,45 +104,6 @@ sub _error {
     confess $self->{last_error} if $self->{RaiseError} and $self->{last_errorcode} == ERROR_MISMATCH_ARGUMENT;
     die $self->{last_error} if $self->{RaiseError} or ( $self->{IO} and ( ref( $self->{IO} eq "Kafka::IO" ) and $self->{IO}->RaiseError ) );
     return;
-}
-
-sub _receive {
-    my $self            = shift;
-    my $request_type    = shift;
-
-    my $response = {};
-    my $message = $self->{IO}->receive( 4 );
-    return $self->_error( $self->{IO}->last_errorcode, $self->{IO}->last_error )
-        unless ( $message and defined $$message );
-    my $tail = $self->{IO}->receive( unpack( "N", $$message ) );
-    return $self->_error( $self->{IO}->last_errorcode, $self->{IO}->last_error )
-        unless ( $tail and defined $$tail );
-    $$message .= $$tail;
-
-    my $decoded;
-    if ( $request_type == REQUESTTYPE_FETCH )
-    {
-        $decoded = fetch_response( $message );
-# WARNING: remember the error code of the last received packet
-        unless ( $response->{error_code} = $decoded->{header}->{error_code} )
-        {
-            $response->{messages} = [] unless defined $response->{messages};
-            push @{$response->{messages}}, @{$decoded->{messages}};
-        }
-    }
-    elsif ( $request_type == REQUESTTYPE_OFFSETS )
-    {
-        $decoded = offsets_response( $message );
-# WARNING: remember the error code of the last received packet
-        unless ( $response->{error_code} = $decoded->{header}->{error_code} )
-        {
-            $response->{offsets} = [] unless defined $response->{offsets};
-            push @{$response->{offsets}}, @{$decoded->{offsets}};
-# WARNING: remember the error code of the last received packet
-            $response->{error} = $decoded->{error};
-        }
-    }
-    return $response;
 }
 
 ##
@@ -286,25 +241,9 @@ Kafka::Consumer - object interface to the consumer client
 
 =head1 VERSION
 
-This documentation refers to C<Kafka::Consumer> version 0.21
+This documentation refers to C<Kafka::Consumer> version 0.22
 
 =head1 SYNOPSIS
-
-Setting up:
-
-    #-- IO
-    use Kafka qw( KAFKA_SERVER_PORT DEFAULT_TIMEOUT );
-    use Kafka::IO;
-    
-    my $io;
-    
-    $io = Kafka::IO->new(
-        host        => "localhost",
-        port        => KAFKA_SERVER_PORT,
-        timeout     => DEFAULT_TIMEOUT, # Optional,
-                                        # default = DEFAULT_TIMEOUT
-        RaiseError  => 0                # Optional, default = 0
-        );
 
 Consumer:
 
@@ -312,7 +251,7 @@ Consumer:
     use Kafka::Consumer;
     
     my $consumer = Kafka::Consumer->new(
-        IO          => $io,
+        broker_list => join(",", ["localhost:9092", "localhost:9093"]),
         RaiseError  => 0    # Optional, default = 0
         );
     
@@ -380,13 +319,13 @@ Provides an object oriented model of communication.
 
 =item *
 
-Supports parsing the Apache Kafka 0.7 Wire Format protocol.
+Supports parsing the Apache Kafka 0.8 Wire Format protocol.
 
 =item *
 
-Supports Apache Kafka Requests and Responses (FETCH with
-no compression codec attribute now). Within this module we currently support
-access to FETCH Request, OFFSETS Request, FETCH Response, OFFSETS Response.
+Supports Apache Kafka Requests and Responses (FETCH with no compression codec
+attribute now). Within this module we currently support access to FETCH
+Request, OFFSETS Request, FETCH Response, OFFSETS Response.
 
 =item *
 
@@ -419,10 +358,10 @@ The following arguments are currently recognized:
 
 =over 3
 
-=item C<IO =E<gt> $io>
+=item C<broker_list =E<gt> $brokers>
 
-C<$io> is the L<Kafka::IO|Kafka::IO> object that allow you to communicate to
-the Apache Kafka server without using the Apache ZooKeeper service.
+C<$brokers> is a comma separated list of brokers and their port number.
+Ex. "localhost:9092,localhost:9093"
 
 =item C<RaiseError =E<gt> $mode>
 
@@ -467,7 +406,8 @@ C<offsets()> takes arguments. The following arguments are currently recognized:
 
 =item C<$topic>
 
-The C<$topic> must be a normal non-false string of non-zero length.
+The C<$topic> must be a normal non-false string of non-zero length. It should
+be a valid topic on the brokers.
 
 =item C<$partition>
 
@@ -507,7 +447,8 @@ C<fetch()> takes arguments. The following arguments are currently recognized:
 
 =item C<$topic>
 
-The C<$topic> must be a normal non-false string of non-zero length.
+The C<$topic> must be a normal non-false string of non-zero length. It should
+represent a valid topic on the brokers.
 
 =item C<$partition>
 
