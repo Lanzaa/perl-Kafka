@@ -8,7 +8,7 @@ use warnings;
 
 use lib 'lib';
 
-use Test::More tests => 10;
+use Test::More tests => 9;
 
 # PRECONDITIONS ----------------------------------------------------------------
 
@@ -22,19 +22,14 @@ my $server = Kafka::Mock->new(
     );
 isa_ok( $server, 'Kafka::Mock' );
 
-my $io = Kafka::IO->new(
-    host        => "localhost",
-    port        => $server->port,
-    );
-isa_ok( $io, 'Kafka::IO' );
-
 # INSTRUCTIONS -----------------------------------------------------------------
 
 # -- verify load the module
 BEGIN { use_ok 'Kafka::Consumer' }
 
 my $consumer = Kafka::Consumer->new(
-    IO          => $io,
+    broker_list => join(",", ("localhost:".$server->port)),
+    _no_bootstrap => 1,
     );
 unless ( $consumer )
 {

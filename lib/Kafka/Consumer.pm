@@ -65,6 +65,7 @@ sub new {
         }
         $self->{BC} = Kafka::BrokerChannel->new(
             broker_list => $opts{broker_list},
+            _no_bootstrap => $opts{_no_bootstrap},
         );
     } else {
         croak("A broker_list must be supplied to new Kafka::Consumers.");

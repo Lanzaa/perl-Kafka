@@ -34,8 +34,9 @@ BEGIN { if(DEBUG) { use Data::Dumper; } }
 ##
 # TODO: pod, impl
 # * allow passing of a list of topics
+# * allow set timeout
 sub new {
-    my ($class, %opt) = @_;
+    my ($class, %opts) = @_;
 
     my $self = {
         timeout => DEFAULT_TIMEOUT, # timeout for connections
@@ -45,18 +46,15 @@ sub new {
     };
     bless($self, $class);
 
-    # TODO: impl
-    # * allow set timeout
-
-    unless (defined( _STRING( $opt{broker_list}))) {
+    unless (defined( _STRING( $opts{broker_list}))) {
         croak("The broker_list must be supplied as a string.");
     }
-    $self->{broker_list} = $opt{broker_list};
+    $self->{broker_list} = $opts{broker_list};
 
     # Bootstrap and initialize all connections
-    $self->_init([]); # TODO allow passing of limited topics
-    # TODO: implement
-    #die("[BUG] brokerchannel is not implemented");
+    if (!$opts{_no_bootstrap}) {
+        $self->_init([]); # TODO allow passing of limited topics
+    }
     return $self;
 }
 

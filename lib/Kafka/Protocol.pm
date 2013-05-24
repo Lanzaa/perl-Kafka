@@ -331,6 +331,10 @@ sub metadata_request_ng {
 # TODO impl, test, doc
 sub produce_request_ng {
     my ($data, $opts) = @_;
+    if (!defined(_HASHLIKE($data)) 
+        || (defined($opts) && !defined(_HASHLIKE($opts)))) {
+        return _error( ERROR_MISMATCH_ARGUMENT );
+    }
 
     # TODO Allow ack level to be set
     # TODO Allow timeout to be set
@@ -343,12 +347,21 @@ sub produce_request_ng {
             ", ACK_ALLREPLICAS, DEFAULT_TIMEOUT_MS, scalar(keys $data)
         );
     while (my ($topic, $tdata) = each($data)) {
+        if (!defined(_STRING($topic)) 
+            || !defined(_HASHLIKE($tdata))) {
+            return _error( ERROR_MISMATCH_ARGUMENT );
+        }
+        
         $packed .= pack("
             s>/a    # Topic
             l>      # Number of partitions
             ", $topic, scalar(keys $tdata)
         );
         while (my ($partId, $pdata) = each($tdata)) {
+            if (!defined(_NONNEGINT($partId))
+                || !defined(_ARRAY0($pdata))) {
+                return _error( ERROR_MISMATCH_ARGUMENT );
+            }
             $packed .= pack("
                 l>      # Partition id
                 l>/a    # Message set length and data
@@ -836,44 +849,6 @@ sub offsets_request_ng {
     }
 
     return \$packed;
-
-#    my $partition       = shift;
-#    my $time            = shift;
-#    my $max_number      = _POSINT( shift ) or return _error( ERROR_MISMATCH_ARGUMENT );
-#
-#    return _error( ERROR_MISMATCH_ARGUMENT ) unless defined( _NONNEGINT( $partition ) );
-#    ( ref( $time ) eq "Math::BigInt" ) or defined( _NUMBER( $time ) ) or return _error( ERROR_MISMATCH_ARGUMENT );
-#    $time = int( $time );
-#    return _error( ERROR_MISMATCH_ARGUMENT ) if $time < -2;
-#
-#    # TODO Allow multiple partition requests?
-#    my $encoded = pack("l>l>", -1, 1); # Replica id and topic count
-#    $encoded .= pack("s>/a", $topic);
-#    $encoded .= pack("l>l>", 1, $partition);
-#    $encoded .= ( BITS64 ? pack( "q>", $time + 0 ) : Kafka::Int64::packq( $time + 0 ) );   # TIME
-#    $encoded .= pack( "
-#                      N                                   # MAX_NUMBER
-#                      ",
-#                      $max_number,
-#            );
-#
-#    if ( DEBUG )
-#    {
-#        print STDERR "Offsets request:\n"
-#            ."TIME               = $time\n"
-#            ."MAX_NUMBER         = $max_number\n"
-#            ."ENCODED_LEN        = ".bytes::length( $encoded )."\n"
-#        ;
-#    }
-#
-#    $encoded = _request_header_encode(
-#            bytes::length( $encoded ),
-#            APIKEY_OFFSETS,
-#            CLIENT_ID, # ClientID
-#            ).$encoded;
-#
-#    return $encoded;
-#
 }
 
 sub offsets_request {
