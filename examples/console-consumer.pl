@@ -4,9 +4,6 @@ use strict;
 use warnings;
 
 use Kafka qw(
-    BITS64
-    KAFKA_SERVER_PORT
-    DEFAULT_TIMEOUT
     TIMESTAMP_EARLIEST
     TIMESTAMP_LATEST
     DEFAULT_MAX_OFFSETS
@@ -43,12 +40,9 @@ if (!defined($partition) || scalar(@brokers) == 0 || length($topic) == 0) {
 #-- Consumer
 my $consumer = Kafka::Consumer->new(
     broker_list => join(",", @brokers),
-    #RaiseError => 0,
 );
 
 unless(defined($consumer)) { warn("No consumer!"); }
-
-print STDERR "We have a consumer.\n"; # XXX
 
 # Get a list of valid offsets up max_number before the given time
 my $offsets;
@@ -56,8 +50,8 @@ my $hw = 0;
 if ( $offsets = $consumer->offsets(
     $topic,             # topic
     $partition,         # partition
-    TIMESTAMP_EARLIEST, # time
-    2, # max_number
+    TIMESTAMP_LATEST, # time
+    DEFAULT_MAX_OFFSETS, # max_number
     ) )
 {
     foreach my $offset ( @$offsets )
@@ -75,7 +69,7 @@ if ( !$offsets or $consumer->last_error )
         $consumer->last_error, "\n";
 }
 
-print STDERR "Beginning to fetch\n"; # XXX
+print "Beginning to fetch\n";
 
 # Consuming messages
 while ( my $messages = $consumer->fetch(
