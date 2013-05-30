@@ -61,6 +61,8 @@ sub new {
             broker_list => $opts{broker_list},
             _no_bootstrap => $opts{_no_bootstrap},
         );
+    } elsif (defined($self->{BC})) {
+        # Used the passed in channel
     } else {
         croak("A broker_list must be supplied to new Kafka::Consumers.");
     }
