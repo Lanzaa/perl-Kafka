@@ -42,6 +42,7 @@ use Carp;
 use Digest::CRC     qw( crc32 );
 use Params::Util    qw( _STRING _NONNEGINT _POSINT _NUMBER _ARRAY0 _SCALAR _HASHLIKE );
 use IO::Uncompress::Gunzip qw{ gunzip };
+use Compress::Snappy;
 
 use Data::Dumper;
 
@@ -673,18 +674,32 @@ sub _decode_message {
         $out = [$message]; # Easy
     } else {
         # Handle compression
-        my $pos = 0;
+        my $pos2 = 0;
         my $data = '';
         if ($message->{compression} == COMPRESSION_GZIP) {
             gunzip(\$message->{payload} => \$data);
         } elsif ($message->{compression} == COMPRESSION_SNAPPY) {
-            die("[BUG] SNAPPY compressed messaged has not been implemented.");
+            my $payload = $message->{payload};
+            my ($header, $x_version, $x_compatversion, $x_length) = unpack("a8 L> L> L>", $message->{payload});
+            if ($header eq "\x82SNAPPY\x00") {
+                # Found a xerial header.... nonstandard snappy compression header
+                if ($x_compatversion == 1 && $x_version == 1) {
+                    $payload = substr($message->{payload}, 20);
+                } else {
+                    # print STDERR "V $x_version and comp $x_compatversion\n";
+                    die("[BUG] Snappy compression with incompatible xerial header version found.");
+                }
+            }
+            $data = decompress($payload);
+            if (!defined($data)) {
+                die("[BUG] Unable to decompress snappy compressed data.");
+            }
         } else {
             die("[ERROR] Unknown compression type found.");
         }
         my $buf_hr = {
             data => \$data,
-            position => \$pos,
+            position => \$pos2,
         };
         $out = _messageset_decode( $buf_hr, bytes::length($data) );
         $buf_hr = undef;
