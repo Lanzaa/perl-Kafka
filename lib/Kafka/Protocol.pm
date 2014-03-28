@@ -35,7 +35,7 @@ our @EXPORT_OK  = qw(
     CLIENT_ID
     );
 
-our $VERSION = '0.22';
+our $VERSION = '0.23';
 
 use bytes;
 use Carp;

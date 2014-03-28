@@ -141,8 +141,8 @@ my $request_multi_partitions =                            # PRODUCE Request - "n
     .'74657374'     # Topic (test)
     .'00000002'     # number of partitions
 # Note: the partition order may change...
-    .$partition_01
     .$partition_00
+    .$partition_01
     ;
 
 # control request to a series of messages
@@ -154,15 +154,15 @@ my $topic_01 =
      '0006'         # Topic length
     .'746573743031' # Topic (test)
     .'00000002'     # number of partitions
-    .$partition_01
     .$partition_00
+    .$partition_01
     ;
 my $topic_02 =
      '0006'         # Topic length
     .'746573743032' # Topic (test)
     .'00000002'     # number of partitions
-    .$partition_01
     .$partition_00
+    .$partition_01
     ;
 my $request_multi_topics_partitions =                            # PRODUCE Request - "no compression" now
     # Produce Request

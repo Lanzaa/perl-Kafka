@@ -5,7 +5,7 @@ use strict;
 use warnings;
 use sigtrap;
 
-our $VERSION = '0.22';
+our $VERSION = '0.23';
 
 use bytes;
 use Carp;

@@ -1,5 +1,9 @@
 Revision history for Kafka package
 
+0.23  Fri Mar  28 2014
+    CHANGES:
+    - Add support for Snappy compression.
+
 0.22  Fri May  24 2013
     CHANGES:
     - Updated Consumer to use BrokerChannels

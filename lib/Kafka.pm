@@ -37,7 +37,7 @@ our @EXPORT_OK  = qw(
 #    ERRORCODE_UNKNOWN
 #    ERRORCODE_WRONG_PARTITION_CODE
 
-our $VERSION = '0.22';
+our $VERSION = '0.23';
 
 use Config;
 

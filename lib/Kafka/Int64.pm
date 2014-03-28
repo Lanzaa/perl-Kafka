@@ -8,7 +8,7 @@ use warnings;
 # limited to 32 bits and slow bigint must be used instead. Use subs from this module
 # in such case.
 
-our $VERSION = '0.22';
+our $VERSION = '0.23';
 
 use bytes;
 use bigint; # this allows integers of practially any size at the cost of significant performance drop

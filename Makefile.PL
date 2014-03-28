@@ -31,6 +31,7 @@ my %config = (
     PREREQ_PM                   => {            # more to the list $Module::CoreList::version{5.010}
         'Digest::CRC'           => 0.18,
         'Params::Util'          => 1.04,
+        'Compress::Snappy'      => 0.23,
         },
     BUILD_REQUIRES              => {            # more to the list $Module::CoreList::version{5.010}
         'Test::Deep'            => 0.109,
